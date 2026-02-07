@@ -36,6 +36,7 @@ python3 subdotko.py -l domains.txt -t 50
 | `-d, --domain` | Single domain to scan |
 | `-l, --list` | File containing list of domains |
 | `-t, --threads` | Number of threads (default: 20) |
+| `-e, --enumerate` | Enumerate subdomains with subfinder first |
 
 ## Fingerprints
 
