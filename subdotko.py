@@ -256,7 +256,7 @@ def main():
     banner = """[bold cyan]
     ▌  ▌  ▗ ▌   
 ▛▘▌▌▛▌▛▌▛▌▜▘▙▘▛▌
-▄▌▙▌▙▌▙▌▙▌▐▖▛▖▙▌ [/bold cyan][dim]v1.0.0[/dim]
+▄▌▙▌▙▌▙▌▙▌▐▖▛▖▙▌ [/bold cyan][dim]v1.0.1[/dim]
 [white][dim]pajarori[/dim][/white]
     """
     console.print(banner)
