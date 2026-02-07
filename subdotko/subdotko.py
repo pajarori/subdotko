@@ -224,7 +224,7 @@ class Subdotko:
         if cnames:
             status = http_response.get('status_code', '?') if http_response else '?'
             status_color = "green" if status == 200 else "yellow" if isinstance(status, int) and status < 400 else "red"
-            return ("info", f"[[{status_color}]{status}[/]] [blue]{domain}[/] → [dim]{cnames[0]}[/] {cname_cnames or ''}")
+            return ("info", f"[[{status_color}]{status}[/]] [blue]{domain}[/] → {cnames[0]} [dim]{cname_cnames or ''}[/]")
         
         return None
     
