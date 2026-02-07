@@ -1,2 +1,2 @@
-include blacklists.txt
-recursive-include fingerprints *.yml
+include subdotko/blacklists.txt
+recursive-include subdotko/fingerprints *.yml

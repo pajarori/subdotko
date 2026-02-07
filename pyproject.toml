@@ -43,8 +43,8 @@ subdotko = "subdotko:main"
 Homepage = "https://github.com/pajarori/subdotko"
 Repository = "https://github.com/pajarori/subdotko"
 
-[tool.setuptools]
-py-modules = ["subdotko"]
+[tool.setuptools.packages.find]
+where = ["."]
 
 [tool.setuptools.package-data]
-"*" = ["fingerprints/*.yml", "blacklists.txt"]
+subdotko = ["fingerprints/*.yml", "blacklists.txt"]
