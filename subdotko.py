@@ -1,4 +1,5 @@
-import dns.resolver, requests, re, os, yaml, argparse
+import dns.resolver, requests, re, os, yaml, argparse, sys
+from pathlib import Path
 from rich.text import Text
 from rich.panel import Panel
 from rich.console import Console
@@ -9,18 +10,23 @@ from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn, TimeEl
 console = Console()
 requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
 
+def get_package_dir():
+    return Path(__file__).parent
 class Subdotko:
     resolvers_url = "https://raw.githubusercontent.com/trickest/resolvers/refs/heads/main/resolvers.txt"
     
-    def __init__(self, fingerprint_dir="fingerprints"):
-        self.fingerprint_dir = fingerprint_dir
+    def __init__(self, fingerprint_dir=None):
+        pkg_dir = get_package_dir()
+        print(pkg_dir)
+        self.fingerprint_dir = fingerprint_dir or str(pkg_dir / "fingerprints")
+        self.blacklist_path = str(pkg_dir / "blacklists.txt")
         self.blacklist = self._load_blacklist()
         self.resolvers = self._load_resolvers()
         self.fingerprints = self._load_fingerprints()
     
-    def _load_blacklist(self, filepath = "blacklists.txt"):
-        if os.path.isfile(filepath):
-            with open(filepath, "r") as f:
+    def _load_blacklist(self):
+        if os.path.isfile(self.blacklist_path):
+            with open(self.blacklist_path, "r") as f:
                 return [line.strip() for line in f if line.strip()]
         return []
     
@@ -164,10 +170,9 @@ class Subdotko:
         return ("info", f"[[{status_color}]{status}[/]] [blue]{domain}[/] → [dim]{cnames[0]}[/] {cname_cnames or ''}")
 
 
-if __name__ == "__main__":
+def main():
     parser = argparse.ArgumentParser(description="Subdotko - Subdomain fingerprinting tool")
     parser.add_argument("-d", "--domain", help="Domain to scan")
-    parser.add_argument("-o", "--output", help="Output file")
     parser.add_argument("-l", "--list", help="List of domains to scan")
     parser.add_argument("-t", "--threads", type=int, default=20, help="Number of threads (default: 20)")
     args = parser.parse_args()
@@ -181,6 +186,8 @@ if __name__ == "__main__":
     console.print(f"[dim]Loaded [cyan]{len(subdotko.fingerprints['cnames'])}[/] fingerprints[/]")
 
     if args.domain:
+        console.print(f"[dim]Scanning [cyan]{args.domain}[/]\n")
+
         result = subdotko.scan(args.domain)
         if result:
             console.print(result[1])
@@ -209,4 +216,7 @@ if __name__ == "__main__":
                         progress.console.print(result[1])
                     progress.advance(task)
         
-        console.print(f"\n[bold green]✓[/] Scan complete!")
+    console.print(f"\n[bold green]✓[/] Scan complete!")
+
+if __name__ == "__main__":
+    main()

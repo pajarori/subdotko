@@ -1,0 +1,2 @@
+include blacklists.txt
+recursive-include fingerprints *.yml
