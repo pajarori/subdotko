@@ -1,6 +1,11 @@
-# Subdotko
+<div align="center">
 
+# subdotko
 A fast, multi-threaded subdomain takeover scanner with fingerprint-based detection.
+
+![subdotko Demo](subdotko.gif)
+
+</div>
 
 ## Installation
 
