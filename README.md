@@ -3,10 +3,15 @@
 A fast, multi-threaded subdomain takeover scanner with fingerprint-based detection.
 
 ## Installation
+From pipx:
+```bash
+pipx install -e https://github.com/pajarori/subdotko.git
+```
 
+From source:
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/subdotko.git
+git clone https://github.com/pajarori/subdotko.git
 cd subdotko
 
 # Install dependencies
