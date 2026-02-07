@@ -253,10 +253,13 @@ def main():
     parser.add_argument("-e", "--enumerate", action="store_true", help="Enumerate subdomains with subfinder first")
     args = parser.parse_args()
 
-    console.print(Panel.fit(
-        Text("SUBDOTKO", style="bold cyan") + Text(" - Subdomain Takeover Scanner", style="dim"),
-        border_style="cyan"
-    ))
+    banner = """[bold cyan]
+    ▌  ▌  ▗ ▌   
+▛▘▌▌▛▌▛▌▛▌▜▘▙▘▛▌
+▄▌▙▌▙▌▙▌▙▌▐▖▛▖▙▌ [/bold cyan][dim]v1.0.0[/dim]
+[white][dim]pajarori[/dim][/white]
+    """
+    console.print(banner)
 
     subdotko = Subdotko()
     console.print(f"[dim]Loaded [cyan]{len(subdotko.fingerprints['cnames'])}[/] CNAME + [cyan]{len(subdotko.fingerprints['ips'])}[/] IP fingerprints[/]")
