@@ -167,7 +167,9 @@ class Subdotko:
         
         return all(results) if condition == 'and' else any(results)
     
-    def _is_blacklisted(self, value):
+    def _is_blacklisted(self, value, domain=None):
+        if domain and value.rstrip('.').endswith(domain):
+            return True
         return any(bl in value for bl in self.blacklist)
     
     def _find_matching_cname_service(self, cname, http_response):
@@ -203,7 +205,7 @@ class Subdotko:
         cname_cnames = []
         
         for cname in cnames:
-            if self._is_blacklisted(cname):
+            if self._is_blacklisted(cname, domain):
                 return None
             
             service, reason = self._find_matching_cname_service(cname, http_response)
