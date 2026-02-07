@@ -19,6 +19,9 @@ pip install -r requirements.txt
 # Scan a single domain
 python3 subdotko.py -d example.com
 
+# Scan with subdomain enumeration (requires subfinder)
+python3 subdotko.py -d example.com -e
+
 # Scan a list of domains
 python3 subdotko.py -l domains.txt
 
@@ -36,15 +39,13 @@ python3 subdotko.py -l domains.txt -t 50
 
 ## Fingerprints
 
-Fingerprints are stored in `fingerprints/` directory as YAML files. Each fingerprint contains:
+Fingerprints are stored in `fingerprints/` as YAML files supporting:
 
 - **CNAME patterns** - CNAMEs that indicate a specific service
-- **Matcher rules** - Status codes and body content to match
-- **Service name** - Name of the vulnerable service
+- **IP patterns** - IP addresses for IP-based detection
+- **Matcher rules** - Status codes, body content, and header matching
 
 ### Adding Custom Fingerprints
-
-Create a new YAML file in `fingerprints/`:
 
 ```yaml
 identifiers:
@@ -57,7 +58,7 @@ identifiers:
 matcher_rule:
   matchers:
   - condition: or
-    part: body
+    part: body  # or 'header'
     type: word
     words:
     - "Page not found"
@@ -69,7 +70,7 @@ source: custom
 
 ## Blacklist
 
-Edit `blacklists.txt` to add CNAMEs that should be ignored (false positives):
+Edit `blacklists.txt` to exclude false-positive CNAMEs:
 
 ```
 vercel-dns

@@ -1,5 +1,6 @@
-import dns.resolver, requests, re, os, yaml, argparse, sys
+import dns.resolver, requests, re, os, yaml, argparse, subprocess, time
 from pathlib import Path
+from functools import wraps
 from rich.text import Text
 from rich.panel import Panel
 from rich.console import Console
@@ -10,14 +11,31 @@ from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn, TimeEl
 console = Console()
 requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
 
+def retry(tries=3, delay=0.5):
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            for attempt in range(tries):
+                try:
+                    result = func(*args, **kwargs)
+                    if result is not None:
+                        return result
+                except Exception:
+                    pass
+                if attempt < tries - 1:
+                    time.sleep(delay)
+            return None
+        return wrapper
+    return decorator
+
 def get_package_dir():
     return Path(__file__).parent
+
 class Subdotko:
     resolvers_url = "https://raw.githubusercontent.com/trickest/resolvers/refs/heads/main/resolvers.txt"
     
     def __init__(self, fingerprint_dir=None):
         pkg_dir = get_package_dir()
-        print(pkg_dir)
         self.fingerprint_dir = fingerprint_dir or str(pkg_dir / "fingerprints")
         self.blacklist_path = str(pkg_dir / "blacklists.txt")
         self.blacklist = self._load_blacklist()
@@ -39,9 +57,10 @@ class Subdotko:
     
     def _load_fingerprints(self):
         cnames, cnames_data = [], {}
+        ips, ips_data = [], {}
         
         if not os.path.isdir(self.fingerprint_dir):
-            return {"cnames": cnames, "cnames_data": cnames_data}
+            return {"cnames": cnames, "cnames_data": cnames_data, "ips": ips, "ips_data": ips_data}
         
         for filename in os.listdir(self.fingerprint_dir):
             if not filename.endswith(".yml"):
@@ -51,44 +70,59 @@ class Subdotko:
             with open(file_path, "r") as f:
                 data = yaml.safe_load(f)
                 
-            if not data or not data.get("identifiers", {}).get("cnames") or not data.get('matcher_rule'):
+            if not data or not data.get('matcher_rule'):
                 continue
-                
-            for cname in data["identifiers"]["cnames"]:
-                cname_value = cname["value"]
-                cnames.append(cname_value)
-                cnames_data[cname_value] = {
-                    "service_name": data.get('service_name', 'Unknown'),
-                    "matcher_rule": data['matcher_rule']
-                }
+            
+            if data.get("identifiers", {}).get("cnames"):
+                for cname in data["identifiers"]["cnames"]:
+                    cname_value = cname["value"]
+                    cnames.append(cname_value)
+                    cnames_data[cname_value] = {
+                        "service_name": data.get('service_name', 'Unknown'),
+                        "matcher_rule": data['matcher_rule']
+                    }
+            
+            if data.get("identifiers", {}).get("ips"):
+                for ip in data["identifiers"]["ips"]:
+                    if isinstance(ip, dict):
+                        ip_value = ip.get("value", "")
+                    else:
+                        ip_value = str(ip)
+                    
+                    if ip_value:
+                        ips.append(ip_value)
+                        ips_data[ip_value] = {
+                            "service_name": data.get('service_name', 'Unknown'),
+                            "matcher_rule": data['matcher_rule']
+                        }
         
-        return {"cnames": cnames, "cnames_data": cnames_data}
+        return {"cnames": cnames, "cnames_data": cnames_data, "ips": ips, "ips_data": ips_data}
     
+    @retry(tries=3, delay=0.5)
     def dns_query(self, domain, record_type):
         resolver = dns.resolver.Resolver()
         resolver.nameservers = self.resolvers
         resolver.timeout = 3
         resolver.lifetime = 5
-
-        try:
-            answers = resolver.resolve(domain, record_type)
-            return [answer.to_text() for answer in answers]
-        except (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN, dns.resolver.Timeout):
-            return None
-        except Exception:
-            return None
+        answers = resolver.resolve(domain, record_type)
+        return [answer.to_text() for answer in answers]
     
+    @retry(tries=2, delay=0.5)
     def http_query(self, domain):
-        try:
-            r = requests.get(f"http://{domain}", timeout=5, verify=False)
-            title_match = re.search(r'<title>(.*?)</title>', r.text)
-            return {
-                "title": title_match.group(1) if title_match else "",
-                "status_code": r.status_code,
-                "body": r.text
-            }
-        except Exception:
-            return None
+        for protocol in ["https", "http"]:
+            try:
+                r = requests.get(f"{protocol}://{domain}", timeout=5, verify=False)
+                title_match = re.search(r'<title>(.*?)</title>', r.text, re.IGNORECASE)
+                return {
+                    "title": title_match.group(1) if title_match else "",
+                    "status_code": r.status_code,
+                    "body": r.text,
+                    "headers": dict(r.headers),
+                    "protocol": protocol
+                }
+            except:
+                continue
+        return None
     
     def _check_status_matcher(self, response, matcher):
         status = matcher.get('status')
@@ -101,7 +135,12 @@ class Subdotko:
         condition = matcher.get('condition', 'or')
         part = matcher.get('part', 'body')
         
-        text = response['body'] if part == 'body' else ""
+        if part == 'body':
+            text = response.get('body', '')
+        elif part == 'header':
+            text = str(response.get('headers', {}))
+        else:
+            text = response.get('body', '')
         
         if isinstance(words, str):
             return words in text
@@ -128,10 +167,10 @@ class Subdotko:
         
         return all(results) if condition == 'and' else any(results)
     
-    def _is_blacklisted(self, cname):
-        return any(bl in cname for bl in self.blacklist)
+    def _is_blacklisted(self, value):
+        return any(bl in value for bl in self.blacklist)
     
-    def _find_matching_service(self, cname, http_response):
+    def _find_matching_cname_service(self, cname, http_response):
         for fp_cname in self.fingerprints["cnames"]:
             if fp_cname in cname:
                 data = self.fingerprints["cnames_data"][fp_cname]
@@ -144,9 +183,20 @@ class Subdotko:
                     return data['service_name'], reason
         return None, None
     
+    def _find_matching_ip_service(self, ip, http_response):
+        for fp_ip in self.fingerprints["ips"]:
+            if fp_ip == ip or fp_ip in ip:
+                data = self.fingerprints["ips_data"][fp_ip]
+                if self.check_matcher(http_response, data['matcher_rule']):
+                    reason = f"IP: {ip}"
+                    return data['service_name'], reason
+        return None, None
+    
     def scan(self, domain):
         cnames = self.dns_query(domain, "CNAME") or []
-        if not cnames:
+        a_records = self.dns_query(domain, "A") or []
+        
+        if not cnames and not a_records:
             return None
         
         http_response = self.http_query(domain)
@@ -156,7 +206,7 @@ class Subdotko:
             if self._is_blacklisted(cname):
                 return None
             
-            service, reason = self._find_matching_service(cname, http_response)
+            service, reason = self._find_matching_cname_service(cname, http_response)
             if service:
                 reason_text = f" [dim]({reason})[/]" if reason else ""
                 return ("vuln", f"[bold red][VLN][/] [cyan]{domain}[/] → [yellow]{service}[/]{reason_text}")
@@ -165,9 +215,34 @@ class Subdotko:
             if nested:
                 cname_cnames.extend(nested)
         
-        status = http_response.get('status_code', '?') if http_response else '?'
-        status_color = "green" if status == 200 else "yellow" if isinstance(status, int) and status < 400 else "red"
-        return ("info", f"[[{status_color}]{status}[/]] [blue]{domain}[/] → [dim]{cnames[0]}[/] {cname_cnames or ''}")
+        for ip in a_records:
+            service, reason = self._find_matching_ip_service(ip, http_response)
+            if service:
+                reason_text = f" [dim]({reason})[/]" if reason else ""
+                return ("vuln", f"[bold red][VLN][/] [cyan]{domain}[/] → [yellow]{service}[/]{reason_text}")
+        
+        if cnames:
+            status = http_response.get('status_code', '?') if http_response else '?'
+            status_color = "green" if status == 200 else "yellow" if isinstance(status, int) and status < 400 else "red"
+            return ("info", f"[[{status_color}]{status}[/]] [blue]{domain}[/] → [dim]{cnames[0]}[/] {cname_cnames or ''}")
+        
+        return None
+    
+    @staticmethod
+    def enumerate_subdomains(domain):
+        try:
+            result = subprocess.run(
+                ["subfinder", "-d", domain, "-silent"],
+                capture_output=True, text=True, timeout=120
+            )
+            subdomains = result.stdout.strip().splitlines()
+            return [s.strip() for s in subdomains if s.strip()]
+        except FileNotFoundError:
+            console.print("[red]Error:[/] subfinder not found. Install with: go install -v github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest")
+            return []
+        except subprocess.TimeoutExpired:
+            console.print("[yellow]Warning:[/] subfinder timed out")
+            return []
 
 
 def main():
@@ -175,6 +250,7 @@ def main():
     parser.add_argument("-d", "--domain", help="Domain to scan")
     parser.add_argument("-l", "--list", help="List of domains to scan")
     parser.add_argument("-t", "--threads", type=int, default=20, help="Number of threads (default: 20)")
+    parser.add_argument("-e", "--enumerate", action="store_true", help="Enumerate subdomains with subfinder first")
     args = parser.parse_args()
 
     console.print(Panel.fit(
@@ -183,18 +259,33 @@ def main():
     ))
 
     subdotko = Subdotko()
-    console.print(f"[dim]Loaded [cyan]{len(subdotko.fingerprints['cnames'])}[/] fingerprints[/]")
+    console.print(f"[dim]Loaded [cyan]{len(subdotko.fingerprints['cnames'])}[/] CNAME + [cyan]{len(subdotko.fingerprints['ips'])}[/] IP fingerprints[/]")
 
+    domains = []
+    
     if args.domain:
-        console.print(f"[dim]Scanning [cyan]{args.domain}[/]\n")
-
-        result = subdotko.scan(args.domain)
-        if result:
-            console.print(result[1])
+        if args.enumerate:
+            console.print(f"[dim]Enumerating subdomains for [cyan]{args.domain}[/]...[/]")
+            domains = subdotko.enumerate_subdomains(args.domain)
+            if not domains:
+                domains = [args.domain]
+            console.print(f"[dim]Found [cyan]{len(domains)}[/] subdomains[/]")
+        else:
+            domains = [args.domain]
     elif args.list:
         with open(args.list, "r") as f:
-            domains = f.read().splitlines()
-        
+            domains = [line.strip() for line in f if line.strip()]
+    
+    if not domains:
+        console.print("[red]No domains to scan[/]")
+        return
+    
+    if len(domains) == 1:
+        console.print(f"[dim]Scanning [cyan]{domains[0]}[/][/]\n")
+        result = subdotko.scan(domains[0])
+        if result:
+            console.print(result[1])
+    else:
         console.print(f"[dim]Scanning [cyan]{len(domains)}[/] domains with [cyan]{args.threads}[/] threads[/]\n")
         
         with Progress(
@@ -215,7 +306,7 @@ def main():
                     if result:
                         progress.console.print(result[1])
                     progress.advance(task)
-        
+    
     console.print(f"\n[bold green]✓[/] Scan complete!")
 
 if __name__ == "__main__":
