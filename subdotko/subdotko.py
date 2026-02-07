@@ -1,4 +1,4 @@
-import dns.resolver, requests, re, os, yaml, argparse, subprocess, time
+import dns.resolver, requests, re, os, yaml, argparse, subprocess, time, sys
 from pathlib import Path
 from functools import wraps
 from rich.text import Text
@@ -126,14 +126,21 @@ class Subdotko:
     
     def _check_status_matcher(self, response, matcher):
         status = matcher.get('status')
+        negative = matcher.get('negative', False)
+        
+        result = False
         if isinstance(status, list):
-            return response['status_code'] in status
-        return response['status_code'] == status
+            result = response['status_code'] in status
+        else:
+            result = response['status_code'] == status
+            
+        return not result if negative else result
     
     def _check_word_matcher(self, response, matcher):
         words = matcher.get('words', [])
         condition = matcher.get('condition', 'or')
         part = matcher.get('part', 'body')
+        negative = matcher.get('negative', False)
         
         if part == 'body':
             text = response.get('body', '')
@@ -143,10 +150,12 @@ class Subdotko:
             text = response.get('body', '')
         
         if isinstance(words, str):
-            return words in text
+            result = words in text
+            return not result if negative else result
         
         results = [word in text for word in words]
-        return all(results) if condition == 'and' else any(results)
+        final_result = all(results) if condition == 'and' else any(results)
+        return not final_result if negative else final_result
     
     def check_matcher(self, response, matcher_rule):
         if not response:
@@ -162,13 +171,19 @@ class Subdotko:
                 results.append(self._check_status_matcher(response, matcher))
             elif matcher_type == 'word':
                 results.append(self._check_word_matcher(response, matcher))
+            elif matcher_type == 'not_word':
+                matcher['negative'] = True
+                results.append(self._check_word_matcher(response, matcher))
+            elif matcher_type == 'not_status':
+                matcher['negative'] = True
+                results.append(self._check_status_matcher(response, matcher))
             else:
                 results.append(False)
         
-        return all(results) if condition == 'and' else any(results)
+        return all(results) if condition == 'and' or condition == 'and_all' else any(results)
     
     def _is_blacklisted(self, value, domain=None):
-        if domain and value.rstrip('.').endswith(domain):
+        if domain and domain.split('.')[-2] in value:
             return True
         return any(bl in value for bl in self.blacklist)
     
@@ -258,7 +273,7 @@ def main():
     banner = """[bold cyan]
     ▌  ▌  ▗ ▌   
 ▛▘▌▌▛▌▛▌▛▌▜▘▙▘▛▌
-▄▌▙▌▙▌▙▌▙▌▐▖▛▖▙▌ [/bold cyan][dim]v1.0.1[/dim]
+▄▌▙▌▙▌▙▌▙▌▐▖▛▖▙▌ [/bold cyan][dim]v1.0.3[/dim]
 [white][dim]pajarori[/dim][/white]
     """
     console.print(banner)
@@ -268,21 +283,31 @@ def main():
 
     domains = []
     
+    if not sys.stdin.isatty():
+        domains.extend([line.strip() for line in sys.stdin if line.strip()])
+
     if args.domain:
-        if args.enumerate:
-            console.print(f"[dim]Enumerating subdomains for [cyan]{args.domain}[/]...[/]")
-            domains = subdotko.enumerate_subdomains(args.domain)
-            if not domains:
-                domains = [args.domain]
-            console.print(f"[dim]Found [cyan]{len(domains)}[/] subdomains[/]")
-        else:
-            domains = [args.domain]
+        domains.append(args.domain)
     elif args.list:
         with open(args.list, "r") as f:
-            domains = [line.strip() for line in f if line.strip()]
+            domains.extend([line.strip() for line in f if line.strip()])
+    
+    domains = list(set(domains))
+    
+    if args.enumerate:
+        expanded_domains = []
+        for domain in domains:
+            console.print(f"[dim]Enumerating subdomains for [cyan]{domain}[/]...[/]")
+            subs = subdotko.enumerate_subdomains(domain)
+            if subs:
+                expanded_domains.extend(subs)
+                console.print(f"[dim]Found [cyan]{len(subs)}[/] subdomains for [cyan]{domain}[/][/]")
+            else:
+                expanded_domains.append(domain)
+        domains = list(set(expanded_domains))
     
     if not domains:
-        console.print("[red]No domains to scan[/]")
+        console.print("[red]No domains provided. Use -d, -l, or pipe input.[/]")
         return
     
     if len(domains) == 1:
