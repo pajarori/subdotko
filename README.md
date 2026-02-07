@@ -3,35 +3,25 @@
 A fast, multi-threaded subdomain takeover scanner with fingerprint-based detection.
 
 ## Installation
-From pipx:
-```bash
-pipx install -e https://github.com/pajarori/subdotko.git
-```
 
-From source:
 ```bash
-# Clone the repository
-git clone https://github.com/pajarori/subdotko.git
-cd subdotko
-
-# Install dependencies
-pip install -r requirements.txt
+pipx install git+https://github.com/pajarori/subdotko.git
 ```
 
 ## Usage
 
 ```bash
 # Scan a single domain
-python3 subdotko.py -d example.com
+subdotko -d example.com
 
 # Scan with subdomain enumeration (requires subfinder)
-python3 subdotko.py -d example.com -e
+subdotko -d example.com -e
 
 # Scan a list of domains
-python3 subdotko.py -l domains.txt
+subdotko -l domains.txt
 
 # Scan with custom thread count
-python3 subdotko.py -l domains.txt -t 50
+subdotko -l domains.txt -t 50
 ```
 
 ### Options
