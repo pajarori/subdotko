@@ -1,0 +1,17 @@
+identifiers:
+  cnames: []
+  ips:
+  - 52.16.160.97
+  nameservers: []
+  not_cnames: []
+matcher_rule:
+  matchers:
+  - condition: or
+    part: body
+    type: word
+    words:
+    - job board website is either expired or its domain name is invalid.
+  matchers-condition: and
+mode: http
+service_name: smartjobboard.com
+source: dnsreaper

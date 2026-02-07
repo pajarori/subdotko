@@ -1,0 +1,15 @@
+identifiers:
+  cnames: []
+  ips:
+  - type: word
+    value: 172.66.40.184
+  nameservers: []
+  not_cnames: []
+matcher_rule:
+  matchers:
+  - status: 409
+    type: status
+  matchers-condition: and
+mode: http
+service_name: Braincert
+source: offinger

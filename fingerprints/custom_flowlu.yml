@@ -1,0 +1,18 @@
+identifiers:
+  cnames:
+  - type: word
+    value: hc.flowlu.com
+  ips: []
+  nameservers: []
+  not_cnames: []
+matcher_rule:
+  matchers:
+  - condition: or
+    part: body
+    type: word
+    words:
+    - "Page is not found"
+  matchers-condition: and
+mode: http
+service_name: Flowlu
+source: offinger

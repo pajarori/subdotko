@@ -1,0 +1,15 @@
+identifiers:
+  cnames:
+  - type: word
+    value: custom.theneo.io
+  ips: []
+  nameservers: []
+  not_cnames: []
+matcher_rule:
+  matchers:
+  - status: 301
+    type: status
+  matchers-condition: and
+mode: http
+service_name: Theneo
+source: offinger

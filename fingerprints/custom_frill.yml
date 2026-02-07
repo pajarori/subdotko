@@ -1,0 +1,18 @@
+identifiers:
+  cnames:
+  - type: word
+    value: cname.frill.co
+  ips: []
+  nameservers: []
+  not_cnames: []
+matcher_rule:
+  matchers:
+  - condition: or
+    part: body
+    type: word
+    words:
+    - "Oh dear We couldn't find that company"
+  matchers-condition: and
+mode: http
+service_name: Frill.co
+source: offinger

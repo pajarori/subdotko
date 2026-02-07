@@ -1,0 +1,18 @@
+identifiers:
+  cnames:
+  - type: word
+    value: worksome.com
+  ips: []
+  nameservers: []
+  not_cnames: []
+matcher_rule:
+  matchers:
+  - condition: or
+    part: body
+    type: word
+    words:
+    - This page is not available
+  matchers-condition: and
+mode: http
+service_name: Worksome
+source: manual_research

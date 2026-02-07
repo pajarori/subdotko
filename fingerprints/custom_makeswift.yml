@@ -1,0 +1,18 @@
+identifiers:
+  cnames:
+  - type: word
+    value: makeswift.site
+  ips: []
+  nameservers: []
+  not_cnames: []
+matcher_rule:
+  matchers:
+  - condition: or
+    part: body
+    type: word
+    words:
+    - "DEPLOYMENT_NOT_FOUND"
+  matchers-condition: and
+mode: http
+service_name: Makeswift
+source: offinger

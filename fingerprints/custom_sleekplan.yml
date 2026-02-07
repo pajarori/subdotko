@@ -1,0 +1,18 @@
+identifiers:
+  cnames:
+  - type: word
+    value: cname.sleekplan.app
+  ips: []
+  nameservers: []
+  not_cnames: []
+matcher_rule:
+  matchers:
+  - condition: or
+    part: body
+    type: word
+    words:
+    - "Error: Something went wrong"
+  matchers-condition: and
+mode: http
+service_name: Sleekplan
+source: offinger

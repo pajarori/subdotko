@@ -1,0 +1,18 @@
+identifiers:
+  cnames:
+  - type: word
+    value: secure.pageserve.co
+  ips: []
+  nameservers: []
+  not_cnames: []
+matcher_rule:
+  matchers:
+  - condition: or
+    part: body
+    type: word
+    words:
+    - "Pageserver 404"
+  matchers-condition: and
+mode: http
+service_name: Instapage
+source: offinger

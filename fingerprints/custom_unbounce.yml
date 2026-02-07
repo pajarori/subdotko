@@ -1,0 +1,18 @@
+identifiers:
+  cnames:
+  - type: word
+    value: unbouncepages.com
+  ips: []
+  nameservers: []
+  not_cnames: []
+matcher_rule:
+  matchers:
+  - condition: or
+    part: body
+    type: word
+    words:
+    - The requested URL was not found on this server.
+  matchers-condition: and
+mode: http
+service_name: Unbounce
+source: manual_research

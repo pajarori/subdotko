@@ -1,0 +1,18 @@
+identifiers:
+  cnames:
+  - type: word
+    value: helpkit.so
+  ips: []
+  nameservers: []
+  not_cnames: []
+matcher_rule:
+  matchers:
+  - condition: or
+    part: body
+    type: word
+    words:
+    - "Whoops! An error has ocurred"
+  matchers-condition: and
+mode: http
+service_name: Helpkit
+source: offinger

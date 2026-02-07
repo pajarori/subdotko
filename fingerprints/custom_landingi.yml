@@ -1,0 +1,18 @@
+identifiers:
+  cnames:
+  - type: word
+    value: landingi.com
+  ips: []
+  nameservers: []
+  not_cnames: []
+matcher_rule:
+  matchers:
+  - condition: or
+    part: body
+    type: word
+    words:
+    - "It looks like you\u2019re lost"
+  matchers-condition: and
+mode: http
+service_name: Landingi
+source: manual_research

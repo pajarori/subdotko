@@ -1,0 +1,18 @@
+identifiers:
+  cnames:
+  - type: word
+    value: jazz.co
+  ips: []
+  nameservers: []
+  not_cnames: []
+matcher_rule:
+  matchers:
+  - condition: or
+    part: body
+    type: word
+    words:
+    - This page has not been generated for this job.
+  matchers-condition: and
+mode: http
+service_name: JazzHR
+source: manual_research
