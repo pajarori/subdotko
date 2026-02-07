@@ -8,10 +8,8 @@ version = "1.0.1"
 description = "Subdomain Takeover Scanner - Fingerprint-based subdomain takeover detection tool"
 readme = "README.md"
 requires-python = ">=3.8"
-license = {text = "MIT"}
-authors = [
-    {name = "Fajar"}
-]
+license = { text = "MIT" }
+authors = [{ name = "Fajar" }]
 keywords = ["subdomain", "takeover", "security", "scanner", "dns"]
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -28,16 +26,10 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Topic :: Security",
 ]
-dependencies = [
-    "dnspython",
-    "requests",
-    "pyyaml",
-    "rich",
-    "urllib3",
-]
+dependencies = ["dnspython", "requests", "pyyaml", "rich", "urllib3"]
 
 [project.scripts]
-subdotko = "subdotko:main"
+subdotko = "subdotko.subdotko:main"
 
 [project.urls]
 Homepage = "https://github.com/pajarori/subdotko"
