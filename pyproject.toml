@@ -30,7 +30,7 @@ classifiers = [
 dependencies = ["dnspython", "httpx", "pyyaml", "rich", "tldextract"]
 
 [project.scripts]
-subdotko = "subdotko.subdotko:main"
+subdotko = "subdotko.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/pajarori/subdotko"

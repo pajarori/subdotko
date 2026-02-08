@@ -1,124 +1,7 @@
-import dns.resolver, dns.asyncresolver, re, os, yaml, argparse, subprocess, sys, asyncio, hashlib, json, tldextract, httpx, shutil
-from pathlib import Path
-from datetime import datetime, timedelta
-from rich.text import Text
-from rich.panel import Panel
-from rich.console import Console
-from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn, TimeElapsedColumn, TaskProgressColumn
-
-console = Console()
-
-RESOLVER_CACHE_TTL_HOURS = 24
-DEFAULT_RESOLVERS = ["8.8.8.8", "1.1.1.1", "9.9.9.9", "208.67.222.222"]
-
-def get_package_dir():
-    return Path(__file__).parent
-
-def get_data_dir():
-    data_dir = Path.home() / ".local" / "subdotko"
-    data_dir.mkdir(parents=True, exist_ok=True)
-    return data_dir
-
-def get_cache_dir():
-    cache_dir = get_data_dir() / ".cache"
-    cache_dir.mkdir(exist_ok=True)
-    return cache_dir
-
-def ensure_data_files():
-    pkg_dir = get_package_dir()
-    data_dir = get_data_dir()
-    
-    dst_fingerprints = data_dir / "fingerprints"
-    if not dst_fingerprints.exists():
-        src_fingerprints = pkg_dir / "fingerprints"
-        if src_fingerprints.exists():
-            shutil.copytree(src_fingerprints, dst_fingerprints)
-    
-    dst_blacklist = data_dir / "blacklists.txt"
-    if not dst_blacklist.exists():
-        src_blacklist = pkg_dir / "blacklists.txt"
-        if src_blacklist.exists():
-            shutil.copy2(src_blacklist, dst_blacklist)
-
-class ResolverManager:
-    RESOLVERS_URL = "https://raw.githubusercontent.com/trickest/resolvers/refs/heads/main/resolvers.txt"
-    
-    def __init__(self):
-        self.cache_file = get_cache_dir() / "resolvers.json"
-        self.resolvers = self._load_resolvers()
-        self._resolver = None
-        self._async_resolver = None
-    
-    def _load_resolvers(self):
-        cached = self._load_from_cache()
-        if cached:
-            return cached
-        
-        fetched = self._fetch_from_remote()
-        if fetched:
-            self._save_to_cache(fetched)
-            return fetched
-        
-        return DEFAULT_RESOLVERS.copy()
-    
-    def _load_from_cache(self):
-        if not self.cache_file.exists():
-            return None
-        
-        try:
-            with open(self.cache_file, "r") as f:
-                data = json.load(f)
-            
-            cached_time = datetime.fromisoformat(data.get("timestamp", ""))
-            if datetime.now() - cached_time < timedelta(hours=RESOLVER_CACHE_TTL_HOURS):
-                resolvers = data.get("resolvers", [])
-                if resolvers:
-                    return resolvers
-        except (json.JSONDecodeError, ValueError, KeyError, OSError) as e:
-            console.print(f"[dim]Cache read warning: {e}[/]")
-        
-        return None
-    
-    def _fetch_from_remote(self):
-        try:
-            with httpx.Client(timeout=10) as client:
-                response = client.get(self.RESOLVERS_URL)
-                response.raise_for_status()
-                resolvers = [line.strip() for line in response.text.splitlines() if line.strip()]
-                if resolvers:
-                    return resolvers
-        except (httpx.HTTPError, httpx.TimeoutException, OSError) as e:
-            console.print(f"[yellow]Warning:[/] Could not fetch resolvers: {e}")
-        
-        return None
-    
-    def _save_to_cache(self, resolvers):
-        try:
-            data = {
-                "timestamp": datetime.now().isoformat(),
-                "resolvers": resolvers
-            }
-            with open(self.cache_file, "w") as f:
-                json.dump(data, f)
-        except OSError as e:
-            console.print(f"[yellow]Warning:[/] Could not cache resolvers: {e}")
-    
-    def get_resolver(self):
-        if self._resolver is None:
-            self._resolver = dns.resolver.Resolver()
-            self._resolver.nameservers = self.resolvers[:10]
-            self._resolver.timeout = 3
-            self._resolver.lifetime = 5
-        return self._resolver
-    
-    def get_async_resolver(self):
-        if self._async_resolver is None:
-            self._async_resolver = dns.asyncresolver.Resolver()
-            self._async_resolver.nameservers = self.resolvers[:10]
-            self._async_resolver.timeout = 3
-            self._async_resolver.lifetime = 5
-        return self._async_resolver
-
+import dns.resolver, dns.exception, re, os, yaml, subprocess, asyncio, tldextract
+import httpx
+from .utils import get_data_dir, console
+from .resolver import ResolverManager
 
 class Subdotko:
     def __init__(self, fingerprint_dir=None, resolver_manager=None):
@@ -193,7 +76,6 @@ class Subdotko:
         return {"cnames": cnames, "cnames_data": cnames_data, "ips": ips, "ips_data": ips_data}
     
     async def dns_query(self, domain, record_type, retries=3):
-        """Async DNS query with retries."""
         resolver = self.resolver_manager.get_async_resolver()
         
         for attempt in range(retries):
@@ -206,12 +88,12 @@ class Subdotko:
                 return {"status": "no_answer", "records": []}
             except dns.resolver.NoNameservers:
                 return {"status": "no_ns", "records": []}
-            except (dns.resolver.Timeout, dns.resolver.LifetimeTimeout) as e:
+            except (dns.resolver.Timeout, dns.resolver.LifetimeTimeout):
                 if attempt < retries - 1:
                     await asyncio.sleep(0.5)
                     continue
                 return {"status": "timeout", "records": []}
-            except dns.exception.DNSException as e:
+            except dns.exception.DNSException:
                 if attempt < retries - 1:
                     await asyncio.sleep(0.5)
                     continue
@@ -220,7 +102,6 @@ class Subdotko:
         return {"status": "error", "records": []}
     
     async def http_query(self, client, domain, retries=2):
-        """Async HTTP query with connection pooling via shared client."""
         for attempt in range(retries):
             for protocol in ["https", "http"]:
                 try:
@@ -319,7 +200,7 @@ class Subdotko:
             if result and result.get('status') == 'nxdomain':
                 return base_domain
             return None
-        except (ValueError, AttributeError) as e:
+        except (ValueError, AttributeError):
             return None
     
     def _find_matching_cname_service(self, cname, http_response):
@@ -404,118 +285,3 @@ class Subdotko:
         except subprocess.TimeoutExpired:
             console.print("[yellow]Warning:[/] subfinder timed out")
             return []
-
-
-async def scan_domains(subdotko, domains, max_concurrent=20):
-    results = []
-    semaphore = asyncio.Semaphore(max_concurrent)
-    
-    async def scan_with_semaphore(client, domain):
-        async with semaphore:
-            return await subdotko.scan(client, domain)
-    
-    limits = httpx.Limits(max_keepalive_connections=max_concurrent, max_connections=max_concurrent * 2)
-    async with httpx.AsyncClient(
-        verify=False,
-        follow_redirects=True,
-        limits=limits,
-        timeout=httpx.Timeout(10.0, connect=5.0)
-    ) as client:
-        tasks = [scan_with_semaphore(client, domain) for domain in domains]
-        
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[bold blue]{task.description}"),
-            BarColumn(bar_width=24),
-            TaskProgressColumn(),
-            TimeElapsedColumn(),
-            console=console,
-            transient=True
-        ) as progress:
-            task = progress.add_task("", total=len(domains))
-            
-            for coro in asyncio.as_completed(tasks):
-                result = await coro
-                if result:
-                    progress.console.print(result[1])
-                    results.append(result)
-                progress.advance(task)
-    
-    return results
-
-async def scan_single(subdotko, domain):
-    limits = httpx.Limits(max_keepalive_connections=5, max_connections=10)
-    async with httpx.AsyncClient(
-        verify=False,
-        follow_redirects=True,
-        limits=limits,
-        timeout=httpx.Timeout(10.0, connect=5.0)
-    ) as client:
-        return await subdotko.scan(client, domain)
-
-def main():
-    parser = argparse.ArgumentParser(description="Subdotko - Subdomain fingerprinting tool")
-    parser.add_argument("-d", "--domain", help="Domain to scan")
-    parser.add_argument("-l", "--list", help="List of domains to scan")
-    parser.add_argument("-t", "--threads", type=int, default=20, help="Number of concurrent scans (default: 20)")
-    parser.add_argument("-e", "--enumerate", action="store_true", help="Enumerate subdomains with subfinder first")
-    args = parser.parse_args()
-
-    banner = """[bold cyan]
-    ▌  ▌  ▗ ▌   
-▛▘▌▌▛▌▛▌▛▌▜▘▙▘▛▌
-▄▌▙▌▙▌▙▌▙▌▐▖▛▖▙▌ [/bold cyan][dim]v1.1.0[/dim]
-[white][dim]pajarori[/dim][/white]
-    """
-    console.print(banner)
-
-    resolver_manager = ResolverManager()
-    
-    subdotko = Subdotko(resolver_manager=resolver_manager)
-    console.print(f"[dim]Loaded [cyan]{len(subdotko.fingerprints['cnames'])}[/] CNAME + [cyan]{len(subdotko.fingerprints['ips'])}[/] IP fingerprints[/]")
-
-    domains = []
-    
-    if not sys.stdin.isatty():
-        domains.extend([line.strip() for line in sys.stdin if line.strip()])
-
-    if args.domain:
-        domains.append(args.domain)
-    elif args.list:
-        try:
-            with open(args.list, "r") as f:
-                domains.extend([line.strip() for line in f if line.strip()])
-        except OSError as e:
-            console.print(f"[red]Error:[/] Could not read file: {e}")
-            return
-    
-    domains = list(set(domains))
-    
-    if args.enumerate:
-        expanded_domains = []
-        for domain in domains:
-            console.print(f"[dim]Enumerating subdomains for [cyan]{domain}[/]...[/]")
-            subs = subdotko.enumerate_subdomains(domain)
-            if subs:
-                expanded_domains.extend(subs)
-            else:
-                expanded_domains.append(domain)
-        domains = list(set(expanded_domains))
-    
-    if not domains:
-        console.print("[red]No domains provided. Use -d, -l, or pipe input.[/]")
-        return
-    
-    if len(domains) == 1:
-        console.print(f"[dim]Scanning [cyan]{domains[0]}[/][/]\n")
-        result = asyncio.run(scan_single(subdotko, domains[0]))
-        if result:
-            console.print(result[1])
-    else:
-        console.print(f"[dim]Scanning [cyan]{len(domains)}[/] domains with [cyan]{args.threads}[/] concurrent connections[/]\n")
-        asyncio.run(scan_domains(subdotko, domains, max_concurrent=args.threads))
-    
-    console.print(f"\n[bold green]✓[/] Scan complete!")
-
-if __name__ == "__main__":
-    main()
