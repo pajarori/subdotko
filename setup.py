@@ -16,6 +16,7 @@ setup(
         "pyyaml",
         "rich",
         "urllib3",
+        "tldextract",
     ],
     entry_points={
         "console_scripts": [

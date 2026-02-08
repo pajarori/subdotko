@@ -1,4 +1,4 @@
-import dns.resolver, requests, re, os, yaml, argparse, subprocess, time, sys
+import dns.resolver, requests, re, os, yaml, argparse, subprocess, time, sys, tldextract
 from pathlib import Path
 from functools import wraps
 from rich.text import Text
@@ -104,8 +104,17 @@ class Subdotko:
         resolver.nameservers = self.resolvers
         resolver.timeout = 3
         resolver.lifetime = 5
-        answers = resolver.resolve(domain, record_type)
-        return [answer.to_text() for answer in answers]
+        try:
+            answers = resolver.resolve(domain, record_type)
+            return {"status": "found", "records": [answer.to_text() for answer in answers]}
+        except dns.resolver.NXDOMAIN:
+            return {"status": "nxdomain", "records": []}
+        except dns.resolver.NoAnswer:
+            return {"status": "no_answer", "records": []}
+        except dns.resolver.NoNameservers:
+            return {"status": "no_ns", "records": []}
+        except Exception:
+            return {"status": "error", "records": []}
     
     @retry(tries=2, delay=0.5)
     def http_query(self, domain):
@@ -187,6 +196,20 @@ class Subdotko:
             return True
         return any(bl in value for bl in self.blacklist)
     
+    def check_domain_available(self, cname):
+        try:
+            extracted = tldextract.extract(cname.rstrip('.'))
+            base_domain = f"{extracted.domain}.{extracted.suffix}"
+            if not base_domain or base_domain == '.':
+                return None
+            
+            result = self.dns_query(base_domain, 'NS')
+            if result and result.get('status') == 'nxdomain':
+                return base_domain
+            return None
+        except Exception:
+            return None
+    
     def _find_matching_cname_service(self, cname, http_response):
         for fp_cname in self.fingerprints["cnames"]:
             if fp_cname in cname:
@@ -210,8 +233,11 @@ class Subdotko:
         return None, None
     
     def scan(self, domain):
-        cnames = self.dns_query(domain, "CNAME") or []
-        a_records = self.dns_query(domain, "A") or []
+        cname_result = self.dns_query(domain, "CNAME")
+        a_result = self.dns_query(domain, "A")
+        
+        cnames = cname_result.get('records', []) if cname_result else []
+        a_records = a_result.get('records', []) if a_result else []
         
         if not cnames and not a_records:
             return None
@@ -223,14 +249,18 @@ class Subdotko:
             if self._is_blacklisted(cname, domain):
                 return None
             
+            available_domain = self.check_domain_available(cname)
+            if available_domain:
+                return ("dead", f"[bold magenta][DED][/] [cyan]{domain}[/] → [red]{available_domain}[/] [dim](Available for registration!)[/]")
+            
             service, reason = self._find_matching_cname_service(cname, http_response)
             if service:
                 reason_text = f" [dim]({reason})[/]" if reason else ""
                 return ("vuln", f"[bold red][VLN][/] [cyan]{domain}[/] → [yellow]{service}[/]{reason_text}")
             
             nested = self.dns_query(cname, "CNAME")
-            if nested:
-                cname_cnames.extend(nested)
+            if nested and nested.get('records'):
+                cname_cnames.extend(nested['records'])
         
         for ip in a_records:
             service, reason = self._find_matching_ip_service(ip, http_response)
