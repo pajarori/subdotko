@@ -2,7 +2,7 @@
 
 # subdotko
 
-A fast, multi-threaded subdomain takeover scanner with fingerprint-based detection.
+A fast, async subdomain takeover scanner with fingerprint-based detection.
 
 ![subdotko Demo](subdotko.gif)
 
@@ -29,7 +29,7 @@ subdotko -d example.com -e
 # Scan a list of domains
 subdotko -l domains.txt
 
-# Scan with custom thread count
+# Scan with custom concurrency
 subdotko -l domains.txt -t 50
 ```
 
@@ -39,12 +39,12 @@ subdotko -l domains.txt -t 50
 |------|-------------|
 | `-d, --domain` | Single domain to scan |
 | `-l, --list` | File containing list of domains |
-| `-t, --threads` | Number of threads (default: 20) |
+| `-t, --threads` | Number of concurrent scans (default: 20) |
 | `-e, --enumerate` | Enumerate subdomains with subfinder first |
 
 ## Fingerprints
 
-Fingerprints are stored in `fingerprints/` as YAML files supporting:
+Fingerprints support:
 
 - **CNAME patterns** - CNAMEs that indicate a specific service
 - **IP patterns** - IP addresses for IP-based detection
@@ -52,30 +52,28 @@ Fingerprints are stored in `fingerprints/` as YAML files supporting:
 
 ### Adding Custom Fingerprints
 
+All fingerprints are stored in `~/.local/subdotko/fingerprints/` as YAML files.
+
 ```yaml
 identifiers:
   cnames:
   - type: word
     value: example.service.com
   ips: []
-  nameservers: []
-  not_cnames: []
 matcher_rule:
   matchers:
   - condition: or
-    part: body  # or 'header'
+    part: body
     type: word
     words:
     - "Page not found"
   matchers-condition: and
-mode: http
 service_name: Example Service
-source: custom
 ```
 
 ## Blacklist
 
-Edit `blacklists.txt` to exclude false-positive CNAMEs:
+Edit `~/.local/subdotko/blacklists.txt` to exclude false-positive CNAMEs:
 
 ```
 vercel-dns

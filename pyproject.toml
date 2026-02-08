@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "subdotko"
-version = "1.0.3"
+version = "1.1.0"
 description = "Subdomain Takeover Scanner - Fingerprint-based subdomain takeover detection tool"
 readme = "README.md"
 requires-python = ">=3.8"
@@ -26,14 +26,8 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Topic :: Security",
 ]
-dependencies = [
-    "dnspython",
-    "requests",
-    "pyyaml",
-    "rich",
-    "urllib3",
-    "tldextract",
-]
+
+dependencies = ["dnspython", "httpx", "pyyaml", "rich", "tldextract"]
 
 [project.scripts]
 subdotko = "subdotko.subdotko:main"
