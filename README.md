@@ -100,6 +100,7 @@ awsdns
 
 ## Credits & References
 
+- [Subdosec](https://github.com/xcapri/Subdosec) - Fingerprint database reference
 - [BadDNS](https://github.com/blacklanternsecurity/baddns) - Fingerprint database reference
 - [DNSReaper](https://github.com/punk-security/dnsReaper) - Additional fingerprints
 - [Nuclei Templates](https://github.com/projectdiscovery/nuclei-templates) - Takeover templates
