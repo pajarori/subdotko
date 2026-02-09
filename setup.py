@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="subdotko",
-    version="1.0.3",
+    version="1.3.0",
     description="Subdomain Takeover Scanner - Fingerprint-based subdomain takeover detection tool",
     long_description=open("README.md").read(),
     long_description_content_type="text/markdown",
@@ -20,7 +20,7 @@ setup(
     ],
     entry_points={
         "console_scripts": [
-            "subdotko=subdotko.subdotko:main",
+            "subdotko=subdotko.cli:main",
         ],
     },
     classifiers=[

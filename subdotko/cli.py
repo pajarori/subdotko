@@ -1,6 +1,6 @@
-import sys, asyncio, argparse, httpx, json, csv
+import sys, asyncio, argparse, httpx, json, csv, os
 from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn, TimeElapsedColumn, TaskProgressColumn
-from .utils import console, ensure_data_files, VERSION
+from .utils import console, ensure_data_files, get_session_dir, calculate_session_hash, clean_old_sessions, VERSION
 from .resolver import ResolverManager
 from .scanner import Subdotko
 
@@ -70,7 +70,7 @@ def export_results(results, output_path):
         cprint(f"[red]Error:[/] Could not write to {output_path}: {e}")
 
 
-async def scan_domains(subdotko, domains, max_concurrent=20, sleep_time=0.0):
+async def scan_domains(subdotko, domains, max_concurrent=20, sleep_time=0.0, session_file=None):
     results = []
     semaphore = asyncio.Semaphore(max_concurrent)
     
@@ -78,7 +78,8 @@ async def scan_domains(subdotko, domains, max_concurrent=20, sleep_time=0.0):
         async with semaphore:
             if sleep_time > 0:
                 await asyncio.sleep(sleep_time)
-            return await subdotko.scan(client, domain)
+            result = await subdotko.scan(client, domain)
+            return domain, result
     
     limits = httpx.Limits(max_keepalive_connections=max_concurrent, max_connections=max_concurrent * 2)
     async with httpx.AsyncClient(
@@ -91,7 +92,12 @@ async def scan_domains(subdotko, domains, max_concurrent=20, sleep_time=0.0):
         
         if _silent:
             for coro in asyncio.as_completed(tasks):
-                result = await coro
+                domain, result = await coro
+                
+                if session_file:
+                    session_file.write(json.dumps({"d": domain, "r": result}) + "\n")
+                    session_file.flush()
+                
                 if result:
                     results.append(result)
         else:
@@ -107,7 +113,12 @@ async def scan_domains(subdotko, domains, max_concurrent=20, sleep_time=0.0):
                 task = progress.add_task("", total=len(domains))
                 
                 for coro in asyncio.as_completed(tasks):
-                    result = await coro
+                    domain, result = await coro
+                    
+                    if session_file:
+                        session_file.write(json.dumps({"d": domain, "r": result}) + "\n")
+                        session_file.flush()
+
                     if result:
                         display = format_result(result)
                         if display:
@@ -140,6 +151,7 @@ def main():
     parser.add_argument("-s", "--sleep", type=float, default=0.0, help="Sleep time between requests in seconds (default: 0)")
     parser.add_argument("-e", "--enumerate", action="store_true", help="Enumerate subdomains with subfinder first")
     parser.add_argument("--json", action="store_true", help="Output results as JSON to stdout")
+    parser.add_argument("--fresh", action="store_true", help="Ignore existing session and start fresh")
     args = parser.parse_args()
 
     _silent = args.json
@@ -201,8 +213,51 @@ def main():
             if display:
                 cprint(display)
     else:
-        cprint(f"[dim]Scanning [cyan]{len(domains)}[/] domains with [cyan]{args.threads}[/] concurrent connections[/]\n")
-        results = asyncio.run(scan_domains(subdotko, domains, max_concurrent=args.threads, sleep_time=args.sleep))
+        clean_old_sessions()
+        session_hash = calculate_session_hash(domains)
+        session_path = get_session_dir() / f"{session_hash}.jsonl"
+        
+        scanned_domains = set()
+        previous_results = []
+        
+        if session_path.exists():
+            if args.fresh:
+                try:
+                    session_path.unlink()
+                    cprint(f"[dim]Starting fresh session (cleared previous session)[/]")
+                except OSError:
+                    pass
+            else:
+                cprint(f"[dim]Resuming from last saved session...[/]")
+                try:
+                    with open(session_path, "r") as f:
+                        for line in f:
+                            try:
+                                record = json.loads(line)
+                                scanned_domains.add(record["d"])
+                                if record["r"]:
+                                    previous_results.append(record["r"])
+                            except json.JSONDecodeError:
+                                continue
+                except OSError:
+                    pass
+
+        initial_count = len(domains)
+        domains = [d for d in domains if d not in scanned_domains]
+        skipped_count = initial_count - len(domains)
+        
+        if skipped_count > 0:
+            cprint(f"[dim]Skipping [cyan]{skipped_count}[/] already scanned domains[/]")
+            results.extend(previous_results)
+        
+        if not domains:
+             cprint(f"[bold green]✓[/] All domains already scanned!")
+        else:
+            cprint(f"[dim]Scanning [cyan]{len(domains)}[/] domains with [cyan]{args.threads}[/] concurrent connections[/]\n")
+            
+            with open(session_path, "a") as f:
+                new_results = asyncio.run(scan_domains(subdotko, domains, max_concurrent=args.threads, sleep_time=args.sleep, session_file=f))
+                results.extend(new_results)
     
     if args.json:
         print(json.dumps(results, indent=2, default=str))

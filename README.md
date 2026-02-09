@@ -57,6 +57,7 @@ subdotko -d example.com --json
 | `-o, --output` | Output file (.txt, .json, .csv) |
 | `-e, --enumerate` | Enumerate subdomains with subfinder first |
 | `--json` | Output results as JSON to stdout |
+| `--fresh` | Ignore existing session and start fresh |
 
 ## Fingerprints
 

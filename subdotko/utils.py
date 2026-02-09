@@ -7,7 +7,7 @@ console = Console()
 
 RESOLVER_CACHE_TTL_HOURS = 24
 DEFAULT_RESOLVERS = ["8.8.8.8", "1.1.1.1", "9.9.9.9", "208.67.222.222"]
-VERSION = "1.2.0"
+VERSION = "1.3.0"
 
 def get_package_dir():
     return Path(__file__).parent
@@ -37,3 +37,29 @@ def ensure_data_files():
         src_blacklist = pkg_dir / "blacklists.txt"
         if src_blacklist.exists():
             shutil.copy2(src_blacklist, dst_blacklist)
+
+def get_session_dir():
+    session_dir = get_data_dir() / "sessions"
+    session_dir.mkdir(parents=True, exist_ok=True)
+    return session_dir
+
+def calculate_session_hash(domains):
+    import hashlib
+    sorted_domains = sorted(domains)
+    content = "\n".join(sorted_domains).encode('utf-8')
+    return hashlib.md5(content).hexdigest()
+
+def clean_old_sessions(days=3):
+    session_dir = get_session_dir()
+    if not session_dir.exists():
+        return
+    
+    cutoff = datetime.now() - timedelta(days=days)
+    
+    for session_file in session_dir.glob("*.jsonl"):
+        try:
+            mtime = datetime.fromtimestamp(session_file.stat().st_mtime)
+            if mtime < cutoff:
+                session_file.unlink()
+        except OSError:
+            pass
