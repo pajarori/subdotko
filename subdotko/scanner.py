@@ -238,6 +238,7 @@ class Subdotko:
             return None
         
         http_response = await self.http_query(client, domain)
+        http_status = http_response.get('status_code') if http_response else None
         cname_cnames = []
         
         for cname in cnames:
@@ -246,12 +247,27 @@ class Subdotko:
             
             available_domain = await self.check_domain_available(cname)
             if available_domain:
-                return ("dead", f"[bold magenta][DED][/] [cyan]{domain}[/] → [red]{available_domain}[/] [dim](Available for registration!)[/]")
+                return {
+                    "domain": domain,
+                    "status": "dead",
+                    "cname": cname,
+                    "nested_cnames": cname_cnames,
+                    "service": None,
+                    "reason": f"Available for registration: {available_domain}",
+                    "http_status": http_status
+                }
             
             service, reason = self._find_matching_cname_service(cname, http_response)
             if service:
-                reason_text = f" [dim]({reason})[/]" if reason else ""
-                return ("vuln", f"[bold red][VLN][/] [cyan]{domain}[/] → [yellow]{service}[/]{reason_text}")
+                return {
+                    "domain": domain,
+                    "status": "vuln",
+                    "cname": cname,
+                    "nested_cnames": cname_cnames,
+                    "service": service,
+                    "reason": reason,
+                    "http_status": http_status
+                }
             
             nested = await self.dns_query(cname, "CNAME")
             if nested and nested.get('records'):
@@ -260,13 +276,27 @@ class Subdotko:
         for ip in a_records:
             service, reason = self._find_matching_ip_service(ip, http_response)
             if service:
-                reason_text = f" [dim]({reason})[/]" if reason else ""
-                return ("vuln", f"[bold red][VLN][/] [cyan]{domain}[/] → [yellow]{service}[/]{reason_text}")
+                return {
+                    "domain": domain,
+                    "status": "vuln",
+                    "cname": None,
+                    "nested_cnames": [],
+                    "service": service,
+                    "reason": reason,
+                    "http_status": http_status,
+                    "ip": ip
+                }
         
         if cnames:
-            status = http_response.get('status_code', '?') if http_response else '?'
-            status_color = "green" if status == 200 else "yellow" if isinstance(status, int) and status < 400 else "red"
-            return ("info", f"[[{status_color}]{status}[/]] [blue]{domain}[/] → {cnames[0]} [dim]{cname_cnames or ''}[/]")
+            return {
+                "domain": domain,
+                "status": "info",
+                "cname": cnames[0],
+                "nested_cnames": cname_cnames,
+                "service": None,
+                "reason": None,
+                "http_status": http_status
+            }
         
         return None
     

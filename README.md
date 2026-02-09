@@ -8,6 +8,10 @@ A fast, async subdomain takeover scanner with fingerprint-based detection.
 
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![Stars](https://img.shields.io/github/stars/pajarori/subdotko?style=flat&logo=github)](https://github.com/pajarori/subdotko/stargazers)
+[![Forks](https://img.shields.io/github/forks/pajarori/subdotko?style=flat&logo=github)](https://github.com/pajarori/subdotko/network/members)
+[![Issues](https://img.shields.io/github/issues/pajarori/subdotko?style=flat&logo=github)](https://github.com/pajarori/subdotko/issues)
+[![Last Commit](https://img.shields.io/github/last-commit/pajarori/subdotko?style=flat&logo=github)](https://github.com/pajarori/subdotko/commits/main)
 
 </div>
 
@@ -26,11 +30,20 @@ subdotko -d example.com
 # Scan with subdomain enumeration (requires subfinder)
 subdotko -d example.com -e
 
+# Scan from stdin (pipe)
+cat domains.txt | subdotko
+
 # Scan a list of domains
 subdotko -l domains.txt
 
 # Scan with custom concurrency
 subdotko -l domains.txt -t 50
+
+# Scan and save output to a file (JSON, CSV, or TXT)
+subdotko -d example.com -o results.json
+
+# Output results as JSON to stdout (useful for piping)
+subdotko -d example.com --json
 ```
 
 ### Options
@@ -40,7 +53,10 @@ subdotko -l domains.txt -t 50
 | `-d, --domain` | Single domain to scan |
 | `-l, --list` | File containing list of domains |
 | `-t, --threads` | Number of concurrent scans (default: 20) |
+| `-s, --sleep` | Sleep time between requests in seconds (default: 0) |
+| `-o, --output` | Output file (.txt, .json, .csv) |
 | `-e, --enumerate` | Enumerate subdomains with subfinder first |
+| `--json` | Output results as JSON to stdout |
 
 ## Fingerprints
 
