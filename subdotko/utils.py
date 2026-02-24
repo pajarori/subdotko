@@ -13,7 +13,7 @@ def get_package_dir():
     return Path(__file__).parent
 
 def get_data_dir():
-    data_dir = Path.home() / ".local" / "subdotko"
+    data_dir = Path.home() / ".local" / "pajarori" / "subdotko"
     data_dir.mkdir(parents=True, exist_ok=True)
     return data_dir
 
