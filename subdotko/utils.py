@@ -7,7 +7,7 @@ console = Console()
 
 RESOLVER_CACHE_TTL_HOURS = 24
 DEFAULT_RESOLVERS = ["8.8.8.8", "1.1.1.1", "9.9.9.9", "208.67.222.222"]
-VERSION = "1.4.2"
+VERSION = "1.4.3"
 
 
 def backoff_delay(attempt, base=0.1, cap=5.0):

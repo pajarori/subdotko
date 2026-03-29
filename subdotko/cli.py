@@ -44,39 +44,80 @@ def format_result(result):
     return None
 
 
-def export_results(results, output_path):
-    ext = output_path.lower().split('.')[-1] if '.' in output_path else 'txt'
+class OutputWriter:
+    CSV_FIELDS = ["domain", "status", "cname", "nested_cnames", "service", "reason", "http_status"]
 
-    try:
-        if ext == 'json':
-            with open(output_path, 'w') as f:
-                json.dump(results, f, indent=2, default=str)
-        elif ext == 'csv':
-            if not results:
-                return
-            fieldnames = ["domain", "status", "cname", "nested_cnames", "service", "reason", "http_status"]
-            with open(output_path, 'w', newline='') as f:
-                writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction='ignore')
-                writer.writeheader()
-                for r in results:
-                    row = r.copy()
-                    row["nested_cnames"] = ",".join(row.get("nested_cnames", []))
-                    writer.writerow(row)
-        else:
-            with open(output_path, 'w') as f:
-                for r in results:
-                    line = f"{r['domain']},{r['status']}"
-                    if r.get('cname'):
-                        line += f",{r['cname']}"
-                    if r.get('service'):
-                        line += f",{r['service']}"
-                    if r.get('reason'):
-                        line += f",{r['reason']}"
-                    f.write(line + "\n")
+    def __init__(self, output_path=None, json_stdout=False):
+        self.output_path = output_path
+        self.json_stdout = json_stdout
+        self.ext = output_path.lower().split('.')[-1] if output_path and '.' in output_path else 'txt'
+        self._file = None
+        self._csv_writer = None
+        self._results_for_json = []
 
-        cprint(f"[dim]Results saved to [cyan]{output_path}[/][/]")
-    except OSError as e:
-        cprint(f"[red]Error:[/] Could not write to {output_path}: {e}")
+    def open(self):
+        if self.json_stdout:
+            return
+        if not self.output_path:
+            return
+        try:
+            if self.ext == 'json':
+                self._file = open(self.output_path, 'w')
+                self._file.write('[\n')
+            elif self.ext == 'csv':
+                self._file = open(self.output_path, 'w', newline='')
+                self._csv_writer = csv.DictWriter(self._file, fieldnames=self.CSV_FIELDS, extrasaction='ignore')
+                self._csv_writer.writeheader()
+                self._file.flush()
+            else:
+                self._file = open(self.output_path, 'w')
+        except OSError as e:
+            cprint(f"[red]Error:[/] Could not open {self.output_path}: {e}")
+
+    def write(self, result):
+        if not result or result.get("status") == ScanResult.TIMEOUT:
+            return
+        if self.json_stdout:
+            self._results_for_json.append(result)
+            return
+        if not self._file:
+            return
+        try:
+            if self.ext == 'json':
+                prefix = '  ' if self._file.tell() <= 2 else ',\n  '
+                self._file.write(prefix + json.dumps(result, default=str))
+                self._file.flush()
+            elif self.ext == 'csv':
+                row = result.copy()
+                row["nested_cnames"] = ",".join(row.get("nested_cnames", []))
+                self._csv_writer.writerow(row)
+                self._file.flush()
+            else:
+                line = f"{result['domain']},{result['status']}"
+                if result.get('cname'):
+                    line += f",{result['cname']}"
+                if result.get('service'):
+                    line += f",{result['service']}"
+                if result.get('reason'):
+                    line += f",{result['reason']}"
+                self._file.write(line + "\n")
+                self._file.flush()
+        except OSError:
+            pass
+
+    def close(self):
+        if self.json_stdout:
+            print(json.dumps(self._results_for_json, indent=2, default=str))
+            return
+        if not self._file:
+            return
+        try:
+            if self.ext == 'json':
+                self._file.write('\n]\n')
+            self._file.close()
+            cprint(f"[dim]Results saved to [cyan]{self.output_path}[/][/]")
+        except OSError:
+            pass
 
 
 class ScanStats:
@@ -110,7 +151,7 @@ class ScanStats:
         )
 
 
-async def scan_domains(subdotko, domains, max_concurrent=20, sleep_time=0.0, session_file=None):
+async def scan_domains(subdotko, domains, max_concurrent=20, sleep_time=0.0, session_file=None, output_writer=None):
     results = []
     timeout_domains = []
     stats = ScanStats()
@@ -145,6 +186,8 @@ async def scan_domains(subdotko, domains, max_concurrent=20, sleep_time=0.0, ses
                     timeout_domains.append(domain)
                 elif result:
                     results.append(result)
+                    if output_writer:
+                        output_writer.write(result)
                     if not _silent:
                         display = format_result(result)
                         if display:
@@ -199,7 +242,7 @@ async def scan_domains(subdotko, domains, max_concurrent=20, sleep_time=0.0, ses
     return results, timeout_domains, stats
 
 
-async def retry_timeouts(subdotko, timeout_domains, session_file=None):
+async def retry_timeouts(subdotko, timeout_domains, session_file=None, output_writer=None):
     if not timeout_domains:
         return [], 0
 
@@ -233,6 +276,8 @@ async def retry_timeouts(subdotko, timeout_domains, session_file=None):
                     still_timeout += 1
                 elif result:
                     retry_results.append(result)
+                    if output_writer:
+                        output_writer.write(result)
                     display = format_result(result)
                     if display:
                         cprint(display)
@@ -331,12 +376,15 @@ def main():
         return
 
     results = []
+    writer = OutputWriter(output_path=args.output, json_stdout=args.json)
+    writer.open()
 
     if len(domains) == 1:
         cprint(f"[dim]Scanning [cyan]{domains[0]}[/][/]\n")
         result = asyncio.run(scan_single(subdotko, domains[0]))
         if result:
             results.append(result)
+            writer.write(result)
             display = format_result(result)
             if display:
                 cprint(display)
@@ -377,6 +425,8 @@ def main():
         if skipped_count > 0:
             cprint(f"[dim]Skipping [cyan]{skipped_count}[/] already scanned domains[/]")
             results.extend(previous_results)
+            for r in previous_results:
+                writer.write(r)
 
         if not domains:
             cprint(f"[bold green]✓[/] All domains already scanned!")
@@ -385,24 +435,19 @@ def main():
 
             with open(session_path, "a") as f:
                 new_results, timeout_domains, stats = asyncio.run(
-                    scan_domains(subdotko, domains, max_concurrent=concurrency, sleep_time=args.sleep, session_file=f)
+                    scan_domains(subdotko, domains, max_concurrent=concurrency, sleep_time=args.sleep, session_file=f, output_writer=writer)
                 )
                 results.extend(new_results)
 
                 if timeout_domains and not args.no_retry:
                     retry_results, still_timeout = asyncio.run(
-                        retry_timeouts(subdotko, timeout_domains, session_file=f)
+                        retry_timeouts(subdotko, timeout_domains, session_file=f, output_writer=writer)
                     )
                     results.extend(retry_results)
                     if still_timeout > 0:
                         cprint(f"[yellow]{still_timeout}[/] domains still timed out after retry")
 
-    if args.json:
-        filtered = [r for r in results if r.get("status") != ScanResult.TIMEOUT]
-        print(json.dumps(filtered, indent=2, default=str))
-    elif args.output:
-        filtered = [r for r in results if r.get("status") != ScanResult.TIMEOUT]
-        export_results(filtered, args.output)
+    writer.close()
 
     cprint(f"\n[bold green]✓[/] Scan complete! ({len(results)} results)")
 
