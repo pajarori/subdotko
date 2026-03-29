@@ -1,5 +1,5 @@
-import sys, asyncio, argparse, httpx, json, csv, os
-from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn, TimeElapsedColumn, TaskProgressColumn, TimeRemainingColumn, MofNCompleteColumn
+import sys, asyncio, argparse, httpx, json, csv, os, time
+from rich.progress import Progress, SpinnerColumn, TextColumn, TaskProgressColumn
 from .utils import console, ensure_data_files, get_session_dir, calculate_session_hash, clean_old_sessions, VERSION
 from .resolver import ResolverManager
 from .scanner import Subdotko, ScanResult
@@ -105,7 +105,7 @@ class ScanStats:
         return (
             f"[bold red]VLN:{self.vuln}[/] "
             f"[bold magenta]DED:{self.dead}[/] "
-            f"[blue]INFO:{self.info}[/] "
+            f"[blue]INF:{self.info}[/] "
             f"[yellow]TMO:{self.timeout}[/]"
         )
 
@@ -151,36 +151,44 @@ async def scan_domains(subdotko, domains, max_concurrent=20, sleep_time=0.0, ses
                             progress.console.print(display)
 
                 progress.advance(task_id)
+                progress.update(task_id, status_line=build_status(stats.scanned, total))
 
                 if sleep_time > 0:
                     await asyncio.sleep(sleep_time)
             except Exception:
                 progress.advance(task_id)
+                progress.update(task_id, status_line=build_status(stats.scanned, total))
             finally:
                 queue.task_done()
 
+    start_time = time.monotonic()
+
     progress = Progress(
         SpinnerColumn(),
-        TextColumn("[bold blue]{task.description}"),
-        BarColumn(bar_width=24),
-        MofNCompleteColumn(),
-        TaskProgressColumn(),
-        TimeElapsedColumn(),
-        TimeRemainingColumn(),
-        TextColumn("{task.fields[stats]}"),
+        TextColumn("{task.fields[status_line]}"),
         console=console,
         transient=True,
         disable=_silent
     )
 
+    def build_status(done, total):
+        elapsed = time.monotonic() - start_time
+        rate = done / elapsed if elapsed > 0 else 0.0
+        remaining = (total - done) / rate if rate > 0 else 0
+        mins, secs = divmod(int(remaining), 60)
+        eta = f"{mins}m{secs:02d}s" if mins else f"{secs}s"
+        pct = int(done / total * 100) if total else 0
+        return f"{done}/{total} ({pct}%) | {rate:.1f}/s | {stats.render()} | ETA {eta}"
+
     with progress:
-        task_id = progress.add_task("scanning", total=len(domains), stats="")
+        task_id = progress.add_task("", total=len(domains), status_line="")
 
         workers = [asyncio.create_task(worker()) for _ in range(max_concurrent)]
 
+        total = len(domains)
+
         for domain in domains:
             await queue.put(domain)
-            progress.update(task_id, stats=stats.render())
 
         for _ in range(max_concurrent):
             await queue.put(None)
