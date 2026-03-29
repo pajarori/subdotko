@@ -67,7 +67,7 @@ subdotko -l domains.txt --no-retry
 |------|-------------|
 | `-d, --domain` | Single domain to scan |
 | `-l, --list` | File containing list of domains |
-| `-t, --concurrency` | Number of concurrent workers (default: 20) |
+| `-t, --threads` | Number of concurrent workers (default: 20) |
 | `-s, --sleep` | Sleep time between requests in seconds (default: 0) |
 | `-o, --output` | Output file (.txt, .json, .csv) |
 | `-e, --enumerate` | Enumerate subdomains with subfinder first |

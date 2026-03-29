@@ -253,7 +253,7 @@ def main():
     parser.add_argument("-d", "--domain", help="Domain to scan")
     parser.add_argument("-l", "--list", help="List of domains to scan")
     parser.add_argument("-o", "--output", help="Output file (.txt, .json, .csv)")
-    parser.add_argument("-t", "--concurrency", type=int, default=20, help="Number of concurrent scans (default: 20)")
+    parser.add_argument("-t", "--threads", type=int, default=20, help="Number of concurrent scans (default: 20)")
     parser.add_argument("-s", "--sleep", type=float, default=0.0, help="Sleep time between requests in seconds (default: 0)")
     parser.add_argument("-e", "--enumerate", action="store_true", help="Enumerate subdomains with subfinder first")
     parser.add_argument("--no-http", action="store_true", help="Skip HTTP/HTTPS checks")
@@ -262,7 +262,7 @@ def main():
     parser.add_argument("--no-retry", action="store_true", help="Skip retry pass for timed-out domains")
     args = parser.parse_args()
 
-    concurrency = args.concurrency
+    concurrency = args.threads
     _silent = args.json
 
     banner = f"""[bold cyan]
