@@ -35,11 +35,13 @@ def ensure_data_files():
     pkg_dir = get_package_dir()
     data_dir = get_data_dir()
 
+    src_fingerprints = pkg_dir / "fingerprints"
     dst_fingerprints = data_dir / "fingerprints"
-    if not dst_fingerprints.exists():
-        src_fingerprints = pkg_dir / "fingerprints"
-        if src_fingerprints.exists():
-            shutil.copytree(src_fingerprints, dst_fingerprints)
+    dst_has_files = dst_fingerprints.exists() and any(dst_fingerprints.glob("*.yml"))
+    if not dst_has_files and src_fingerprints.exists():
+        if dst_fingerprints.exists():
+            shutil.rmtree(dst_fingerprints)
+        shutil.copytree(src_fingerprints, dst_fingerprints)
 
     dst_blacklist = data_dir / "blacklists.txt"
     if not dst_blacklist.exists():

@@ -1,6 +1,6 @@
 import dns.resolver, dns.exception, re, os, yaml, subprocess, asyncio, tldextract
 import httpx
-from .utils import get_data_dir, console, backoff_delay
+from .utils import get_data_dir, get_package_dir, console, backoff_delay
 from .resolver import ResolverManager
 
 MAX_CNAME_DEPTH = 5
@@ -17,7 +17,13 @@ class Subdotko:
     def __init__(self, fingerprint_dir=None, resolver_manager=None, no_http=False,
                  dns_semaphore=None, http_semaphore=None):
         data_dir = get_data_dir()
-        self.fingerprint_dir = fingerprint_dir or str(data_dir / "fingerprints")
+        data_fp_dir = data_dir / "fingerprints"
+        pkg_fp_dir = get_package_dir() / "fingerprints"
+        if data_fp_dir.exists() and any(data_fp_dir.glob("*.yml")):
+            default_fp_dir = str(data_fp_dir)
+        else:
+            default_fp_dir = str(pkg_fp_dir)
+        self.fingerprint_dir = fingerprint_dir or default_fp_dir
         self.blacklist_path = str(data_dir / "blacklists.txt")
         self.blacklist = self._load_blacklist()
         self.resolver_manager = resolver_manager or ResolverManager()
