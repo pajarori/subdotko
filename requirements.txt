@@ -1,5 +1,5 @@
 dnspython
-requests
+httpx
 pyyaml
 rich
-urllib3
+tldextract

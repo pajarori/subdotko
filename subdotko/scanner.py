@@ -1,18 +1,32 @@
 import dns.resolver, dns.exception, re, os, yaml, subprocess, asyncio, tldextract
 import httpx
-from .utils import get_data_dir, console
+from .utils import get_data_dir, console, backoff_delay
 from .resolver import ResolverManager
 
+MAX_CNAME_DEPTH = 5
+
+
+class ScanResult:
+    DEAD = "dead"
+    VULN = "vuln"
+    INFO = "info"
+    TIMEOUT = "timeout"
+
+
 class Subdotko:
-    def __init__(self, fingerprint_dir=None, resolver_manager=None, no_http=False):
+    def __init__(self, fingerprint_dir=None, resolver_manager=None, no_http=False,
+                 dns_semaphore=None, http_semaphore=None):
         data_dir = get_data_dir()
         self.fingerprint_dir = fingerprint_dir or str(data_dir / "fingerprints")
         self.blacklist_path = str(data_dir / "blacklists.txt")
         self.blacklist = self._load_blacklist()
         self.resolver_manager = resolver_manager or ResolverManager()
         self.no_http = no_http
+        self.dns_semaphore = dns_semaphore
+        self.http_semaphore = http_semaphore
         self.fingerprints = self._load_fingerprints()
-    
+        self._cname_regex = self._compile_cname_regex()
+
     def _load_blacklist(self):
         if os.path.isfile(self.blacklist_path):
             try:
@@ -21,19 +35,19 @@ class Subdotko:
             except OSError as e:
                 console.print(f"[yellow]Warning:[/] Could not load blacklist: {e}")
         return []
-    
+
     def _load_fingerprints(self):
         cnames, cnames_data = [], {}
         ips, ips_data = [], {}
-        
+
         if not os.path.isdir(self.fingerprint_dir):
             return {"cnames": cnames, "cnames_data": cnames_data, "ips": ips, "ips_data": ips_data}
-        
+
         try:
             for filename in os.listdir(self.fingerprint_dir):
                 if not filename.endswith(".yml"):
                     continue
-                    
+
                 file_path = os.path.join(self.fingerprint_dir, filename)
                 try:
                     with open(file_path, "r") as f:
@@ -44,10 +58,10 @@ class Subdotko:
                 except (yaml.YAMLError, OSError) as e:
                     console.print(f"[yellow]Warning:[/] Could not load {filename}: {e}")
                     continue
-                        
+
                 if not data or not data.get('matcher_rule'):
                     continue
-                
+
                 if data.get("identifiers", {}).get("cnames"):
                     for cname in data["identifiers"]["cnames"]:
                         cname_value = cname.get("value", "")
@@ -57,14 +71,14 @@ class Subdotko:
                                 "service_name": data.get('service_name', 'Unknown'),
                                 "matcher_rule": data['matcher_rule']
                             }
-                
+
                 if data.get("identifiers", {}).get("ips"):
                     for ip in data["identifiers"]["ips"]:
                         if isinstance(ip, dict):
                             ip_value = ip.get("value", "")
                         else:
                             ip_value = str(ip)
-                        
+
                         if ip_value:
                             ips.append(ip_value)
                             ips_data[ip_value] = {
@@ -73,44 +87,65 @@ class Subdotko:
                             }
         except OSError as e:
             console.print(f"[yellow]Warning:[/] Could not read fingerprints directory: {e}")
-        
+
         return {"cnames": cnames, "cnames_data": cnames_data, "ips": ips, "ips_data": ips_data}
-    
+
+    def _compile_cname_regex(self):
+        if not self.fingerprints["cnames"]:
+            return None
+        escaped = [re.escape(c) for c in self.fingerprints["cnames"]]
+        return re.compile("|".join(escaped))
+
     async def dns_query(self, domain, record_type, retries=3):
-        resolver = self.resolver_manager.get_async_resolver()
-        
         for attempt in range(retries):
             try:
-                answers = await resolver.resolve(domain, record_type)
+                if self.dns_semaphore:
+                    async with self.dns_semaphore:
+                        resolver = self.resolver_manager.get_async_resolver()
+                        answers = await resolver.resolve(domain, record_type)
+                else:
+                    resolver = self.resolver_manager.get_async_resolver()
+                    answers = await resolver.resolve(domain, record_type)
                 return {"status": "found", "records": [answer.to_text() for answer in answers]}
             except dns.resolver.NXDOMAIN:
                 return {"status": "nxdomain", "records": []}
             except dns.resolver.NoAnswer:
                 return {"status": "no_answer", "records": []}
             except dns.resolver.NoNameservers:
+                if attempt < retries - 1:
+                    await asyncio.sleep(backoff_delay(attempt))
+                    continue
                 return {"status": "no_ns", "records": []}
             except (dns.resolver.Timeout, dns.resolver.LifetimeTimeout):
                 if attempt < retries - 1:
-                    await asyncio.sleep(0.5)
+                    await asyncio.sleep(backoff_delay(attempt))
                     continue
                 return {"status": "timeout", "records": []}
             except dns.exception.DNSException:
                 if attempt < retries - 1:
-                    await asyncio.sleep(0.5)
+                    await asyncio.sleep(backoff_delay(attempt))
                     continue
                 return {"status": "error", "records": []}
-        
+
         return {"status": "error", "records": []}
-    
+
     async def http_query(self, client, domain, retries=2):
         for attempt in range(retries):
             for protocol in ["https", "http"]:
                 try:
-                    response = await client.get(
-                        f"{protocol}://{domain}",
-                        timeout=5.0,
-                        follow_redirects=True
-                    )
+                    if self.http_semaphore:
+                        async with self.http_semaphore:
+                            response = await client.get(
+                                f"{protocol}://{domain}",
+                                timeout=5.0,
+                                follow_redirects=True
+                            )
+                    else:
+                        response = await client.get(
+                            f"{protocol}://{domain}",
+                            timeout=5.0,
+                            follow_redirects=True
+                        )
                     title_match = re.search(r'<title>(.*?)</title>', response.text, re.IGNORECASE)
                     return {
                         "title": title_match.group(1) if title_match else "",
@@ -121,55 +156,55 @@ class Subdotko:
                     }
                 except (httpx.HTTPError, httpx.TimeoutException, OSError):
                     continue
-            
+
             if attempt < retries - 1:
-                await asyncio.sleep(0.5)
-        
+                await asyncio.sleep(backoff_delay(attempt))
+
         return None
-    
+
     def _check_status_matcher(self, response, matcher):
         status = matcher.get('status')
         negative = matcher.get('negative', False)
-        
+
         result = False
         if isinstance(status, list):
             result = response['status_code'] in status
         else:
             result = response['status_code'] == status
-            
+
         return not result if negative else result
-    
+
     def _check_word_matcher(self, response, matcher):
         words = matcher.get('words', [])
         condition = matcher.get('condition', 'or')
         part = matcher.get('part', 'body')
         negative = matcher.get('negative', False)
-        
+
         if part == 'body':
             text = response.get('body', '')
         elif part == 'header':
             text = str(response.get('headers', {}))
         else:
             text = response.get('body', '')
-        
+
         if isinstance(words, str):
             result = words in text
             return not result if negative else result
-        
+
         results = [word in text for word in words]
         final_result = all(results) if condition == 'and' else any(results)
         return not final_result if negative else final_result
-    
+
     def check_matcher(self, response, matcher_rule):
         if not response:
             return False
-        
+
         condition = matcher_rule.get('matchers-condition', 'or')
         results = []
-        
+
         for matcher in matcher_rule.get('matchers', []):
             matcher_type = matcher.get('type')
-            
+
             if matcher_type == 'status':
                 results.append(self._check_status_matcher(response, matcher))
             elif matcher_type == 'word':
@@ -182,29 +217,32 @@ class Subdotko:
                 results.append(self._check_status_matcher(response, matcher))
             else:
                 results.append(False)
-        
+
         return all(results) if condition in ('and', 'and_all') else any(results)
-    
+
     def _is_blacklisted(self, value, domain=None):
         if domain and domain.split('.')[-2] in value:
             return True
         return any(bl in value for bl in self.blacklist)
-    
+
     async def check_domain_available(self, cname):
         try:
             extracted = tldextract.extract(cname.rstrip('.'))
             base_domain = f"{extracted.domain}.{extracted.suffix}"
             if not base_domain or base_domain == '.':
                 return None
-            
+
             result = await self.dns_query(base_domain, 'NS')
             if result and result.get('status') == 'nxdomain':
                 return base_domain
             return None
         except (ValueError, AttributeError):
             return None
-    
+
     def _find_matching_cname_service(self, cname, http_response):
+        if self._cname_regex and not self._cname_regex.search(cname):
+            return None, None
+
         for fp_cname in self.fingerprints["cnames"]:
             if fp_cname in cname:
                 data = self.fingerprints["cnames_data"][fp_cname]
@@ -216,7 +254,7 @@ class Subdotko:
                             break
                     return data['service_name'], reason
         return None, None
-    
+
     def _find_matching_ip_service(self, ip, http_response):
         for fp_ip in self.fingerprints["ips"]:
             if fp_ip == ip or fp_ip in ip:
@@ -225,61 +263,95 @@ class Subdotko:
                     reason = f"IP: {ip}"
                     return data['service_name'], reason
         return None, None
-    
-    async def scan(self, client, domain):
-        cname_task = asyncio.create_task(self.dns_query(domain, "CNAME"))
-        a_task = asyncio.create_task(self.dns_query(domain, "A"))
-        
-        cname_result, a_result = await asyncio.gather(cname_task, a_task)
-        
-        cnames = cname_result.get('records', []) if cname_result else []
-        a_records = a_result.get('records', []) if a_result else []
-        
-        if not cnames and not a_records:
-            return None
-        
-        http_response = None if self.no_http else await self.http_query(client, domain)
-        http_status = http_response.get('status_code') if http_response else None
-        cname_cnames = []
-        
-        for cname in cnames:
+
+    async def _resolve_cname_chain(self, initial_cnames, domain, http_response):
+        visited = set()
+        queue = list(initial_cnames)
+        all_cnames = list(initial_cnames)
+        depth = 0
+
+        while queue and depth < MAX_CNAME_DEPTH:
+            cname = queue.pop(0)
+            if cname in visited:
+                continue
+            visited.add(cname)
+            depth += 1
+
             if self._is_blacklisted(cname, domain):
-                return None
-            
+                continue
+
             available_domain = await self.check_domain_available(cname)
             if available_domain:
                 return {
                     "domain": domain,
-                    "status": "dead",
+                    "status": ScanResult.DEAD,
                     "cname": cname,
-                    "nested_cnames": cname_cnames,
+                    "nested_cnames": all_cnames,
                     "service": None,
                     "reason": f"Available for registration: {available_domain}",
-                    "http_status": http_status
+                    "http_status": http_response.get('status_code') if http_response else None
                 }
-            
+
             service, reason = self._find_matching_cname_service(cname, http_response)
             if service:
                 return {
                     "domain": domain,
-                    "status": "vuln",
+                    "status": ScanResult.VULN,
                     "cname": cname,
-                    "nested_cnames": cname_cnames,
+                    "nested_cnames": all_cnames,
                     "service": service,
                     "reason": reason,
-                    "http_status": http_status
+                    "http_status": http_response.get('status_code') if http_response else None
                 }
-            
+
             nested = await self.dns_query(cname, "CNAME")
             if nested and nested.get('records'):
-                cname_cnames.extend(nested['records'])
-        
+                for nc in nested['records']:
+                    if nc not in visited:
+                        queue.append(nc)
+                        all_cnames.append(nc)
+
+        return None
+
+    async def scan(self, client, domain):
+        cname_task = asyncio.create_task(self.dns_query(domain, "CNAME"))
+        a_task = asyncio.create_task(self.dns_query(domain, "A"))
+
+        cname_result, a_result = await asyncio.gather(cname_task, a_task)
+
+        cnames = cname_result.get('records', []) if cname_result else []
+        a_records = a_result.get('records', []) if a_result else []
+
+        cname_timeout = cname_result and cname_result.get('status') == 'timeout'
+        a_timeout = a_result and a_result.get('status') == 'timeout'
+
+        if not cnames and not a_records:
+            if cname_timeout or a_timeout:
+                return {
+                    "domain": domain,
+                    "status": ScanResult.TIMEOUT,
+                    "cname": None,
+                    "nested_cnames": [],
+                    "service": None,
+                    "reason": "DNS timeout",
+                    "http_status": None
+                }
+            return None
+
+        http_response = None if self.no_http else await self.http_query(client, domain)
+        http_status = http_response.get('status_code') if http_response else None
+
+        if cnames:
+            chain_result = await self._resolve_cname_chain(cnames, domain, http_response)
+            if chain_result:
+                return chain_result
+
         for ip in a_records:
             service, reason = self._find_matching_ip_service(ip, http_response)
             if service:
                 return {
                     "domain": domain,
-                    "status": "vuln",
+                    "status": ScanResult.VULN,
                     "cname": None,
                     "nested_cnames": [],
                     "service": service,
@@ -287,20 +359,20 @@ class Subdotko:
                     "http_status": http_status,
                     "ip": ip
                 }
-        
+
         if cnames:
             return {
                 "domain": domain,
-                "status": "info",
+                "status": ScanResult.INFO,
                 "cname": cnames[0],
-                "nested_cnames": cname_cnames,
+                "nested_cnames": cnames[1:] if len(cnames) > 1 else [],
                 "service": None,
                 "reason": None,
                 "http_status": http_status
             }
-        
+
         return None
-    
+
     @staticmethod
     def enumerate_subdomains(domain):
         try:

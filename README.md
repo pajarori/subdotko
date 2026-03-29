@@ -21,6 +21,12 @@ A fast, async subdomain takeover scanner with fingerprint-based detection.
 pipx install git+https://github.com/pajarori/subdotko.git
 ```
 
+To upgrade an existing installation:
+
+```bash
+pipx upgrade subdotko
+```
+
 ## Usage
 
 ```bash
@@ -37,9 +43,9 @@ cat domains.txt | subdotko
 subdotko -l domains.txt
 
 # Scan with custom concurrency
-subdotko -l domains.txt -t 50
+subdotko -l domains.txt -t 100
 
-# Scan without HTTP/HTTPS checks
+# Scan without HTTP/HTTPS checks (DNS-only, faster)
 subdotko -l domains.txt --no-http
 
 # Scan and save output to a file (JSON, CSV, or TXT)
@@ -47,6 +53,12 @@ subdotko -d example.com -o results.json
 
 # Output results as JSON to stdout (useful for piping)
 subdotko -d example.com --json
+
+# Start fresh, ignoring any saved session
+subdotko -l domains.txt --fresh
+
+# Skip retry pass for timed-out domains
+subdotko -l domains.txt --no-retry
 ```
 
 ### Options
@@ -55,21 +67,22 @@ subdotko -d example.com --json
 |------|-------------|
 | `-d, --domain` | Single domain to scan |
 | `-l, --list` | File containing list of domains |
-| `-t, --threads` | Number of concurrent scans (default: 20) |
+| `-t, --concurrency` | Number of concurrent workers (default: 20) |
 | `-s, --sleep` | Sleep time between requests in seconds (default: 0) |
 | `-o, --output` | Output file (.txt, .json, .csv) |
 | `-e, --enumerate` | Enumerate subdomains with subfinder first |
-| `--no-http` | Skip HTTP/HTTPS checks |
+| `--no-http` | Skip HTTP/HTTPS checks (DNS-only mode) |
 | `--json` | Output results as JSON to stdout |
 | `--fresh` | Ignore existing session and start fresh |
+| `--no-retry` | Skip the automatic retry pass for timed-out domains |
 
 ## Fingerprints
 
 Fingerprints support:
 
-- **CNAME patterns** - CNAMEs that indicate a specific service
-- **IP patterns** - IP addresses for IP-based detection
-- **Matcher rules** - Status codes, body content, and header matching
+- **CNAME patterns** — CNAMEs that indicate a specific service
+- **IP patterns** — IP addresses for IP-based detection
+- **Matcher rules** — Status codes, body content, and header matching
 
 ### Adding Custom Fingerprints
 
@@ -94,7 +107,7 @@ service_name: Example Service
 
 ## Blacklist
 
-Edit `~/.local/subdotko/blacklists.txt` to exclude false-positive CNAMEs:
+Edit `(~/.local/pajarori/subdotko/blacklists.txt` to exclude false-positive CNAMEs:
 
 ```
 vercel-dns

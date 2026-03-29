@@ -1,19 +1,23 @@
 import sys, asyncio, argparse, httpx, json, csv, os
-from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn, TimeElapsedColumn, TaskProgressColumn
+from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn, TimeElapsedColumn, TaskProgressColumn, TimeRemainingColumn, MofNCompleteColumn
 from .utils import console, ensure_data_files, get_session_dir, calculate_session_hash, clean_old_sessions, VERSION
 from .resolver import ResolverManager
-from .scanner import Subdotko
+from .scanner import Subdotko, ScanResult
 
 _silent = False
+
+MAX_HTTP_CONNECTIONS = 100
+
 
 def cprint(*args, **kwargs):
     if not _silent:
         console.print(*args, **kwargs)
 
+
 def format_result(result):
     if not result:
         return None
-    
+
     domain = result["domain"]
     status = result["status"]
     cname = result.get("cname", "")
@@ -21,13 +25,13 @@ def format_result(result):
     service = result.get("service", "")
     reason = result.get("reason", "")
     http_status = result.get("http_status")
-    
-    if status == "dead":
+
+    if status == ScanResult.DEAD:
         return f"[bold magenta][DED][/] [cyan]{domain}[/] → [red]{cname}[/] [dim]({reason})[/]"
-    elif status == "vuln":
+    elif status == ScanResult.VULN:
         reason_text = f" [dim]({reason})[/]" if reason else ""
         return f"[bold red][VLN][/] [cyan]{domain}[/] → [yellow]{service}[/]{reason_text}"
-    elif status == "info":
+    elif status == ScanResult.INFO:
         if http_status is None:
             status_color = "white"
             http_status_display = "SKP"
@@ -36,13 +40,13 @@ def format_result(result):
             http_status_display = http_status
         nested_str = f" [dim]{nested}[/]" if nested else ""
         return f"[[{status_color}]{http_status_display}[/]] [blue]{domain}[/] → {cname}{nested_str}"
-    
+
     return None
 
 
 def export_results(results, output_path):
     ext = output_path.lower().split('.')[-1] if '.' in output_path else 'txt'
-    
+
     try:
         if ext == 'json':
             with open(output_path, 'w') as f:
@@ -69,69 +73,166 @@ def export_results(results, output_path):
                     if r.get('reason'):
                         line += f",{r['reason']}"
                     f.write(line + "\n")
-        
+
         cprint(f"[dim]Results saved to [cyan]{output_path}[/][/]")
     except OSError as e:
         cprint(f"[red]Error:[/] Could not write to {output_path}: {e}")
 
 
+class ScanStats:
+    def __init__(self):
+        self.vuln = 0
+        self.dead = 0
+        self.info = 0
+        self.timeout = 0
+        self.scanned = 0
+
+    def update(self, result):
+        self.scanned += 1
+        if not result:
+            return
+        s = result.get("status")
+        if s == ScanResult.VULN:
+            self.vuln += 1
+        elif s == ScanResult.DEAD:
+            self.dead += 1
+        elif s == ScanResult.INFO:
+            self.info += 1
+        elif s == ScanResult.TIMEOUT:
+            self.timeout += 1
+
+    def render(self):
+        return (
+            f"[bold red]VLN:{self.vuln}[/] "
+            f"[bold magenta]DED:{self.dead}[/] "
+            f"[blue]INFO:{self.info}[/] "
+            f"[yellow]TMO:{self.timeout}[/]"
+        )
+
+
 async def scan_domains(subdotko, domains, max_concurrent=20, sleep_time=0.0, session_file=None):
     results = []
-    semaphore = asyncio.Semaphore(max_concurrent)
-    
-    async def scan_with_semaphore(client, domain):
-        async with semaphore:
-            if sleep_time > 0:
-                await asyncio.sleep(sleep_time)
-            result = await subdotko.scan(client, domain)
-            return domain, result
-    
-    limits = httpx.Limits(max_keepalive_connections=max_concurrent, max_connections=max_concurrent * 2)
-    async with httpx.AsyncClient(
+    timeout_domains = []
+    stats = ScanStats()
+
+    queue = asyncio.Queue(maxsize=max_concurrent * 2)
+
+    http_max = min(MAX_HTTP_CONNECTIONS, max_concurrent * 2)
+    limits = httpx.Limits(max_keepalive_connections=min(max_concurrent, MAX_HTTP_CONNECTIONS), max_connections=http_max)
+    client = httpx.AsyncClient(
         verify=False,
         follow_redirects=True,
         limits=limits,
         timeout=httpx.Timeout(10.0, connect=5.0)
-    ) as client:
-        tasks = [scan_with_semaphore(client, domain) for domain in domains]
-        
-        if _silent:
-            for coro in asyncio.as_completed(tasks):
-                domain, result = await coro
-                
+    )
+
+    async def worker():
+        while True:
+            domain = await queue.get()
+            if domain is None:
+                queue.task_done()
+                break
+            try:
+                result = await subdotko.scan(client, domain)
+
                 if session_file:
                     session_file.write(json.dumps({"d": domain, "r": result}) + "\n")
                     session_file.flush()
-                
-                if result:
-                    results.append(result)
-        else:
-            with Progress(
-                SpinnerColumn(),
-                TextColumn("[bold blue]{task.description}"),
-                BarColumn(bar_width=24),
-                TaskProgressColumn(),
-                TimeElapsedColumn(),
-                console=console,
-                transient=True
-            ) as progress:
-                task = progress.add_task("", total=len(domains))
-                
-                for coro in asyncio.as_completed(tasks):
-                    domain, result = await coro
-                    
-                    if session_file:
-                        session_file.write(json.dumps({"d": domain, "r": result}) + "\n")
-                        session_file.flush()
 
-                    if result:
+                stats.update(result)
+
+                if result and result.get("status") == ScanResult.TIMEOUT:
+                    timeout_domains.append(domain)
+                elif result:
+                    results.append(result)
+                    if not _silent:
                         display = format_result(result)
                         if display:
                             progress.console.print(display)
-                        results.append(result)
-                    progress.advance(task)
-    
-    return results
+
+                progress.advance(task_id)
+
+                if sleep_time > 0:
+                    await asyncio.sleep(sleep_time)
+            except Exception:
+                progress.advance(task_id)
+            finally:
+                queue.task_done()
+
+    progress = Progress(
+        SpinnerColumn(),
+        TextColumn("[bold blue]{task.description}"),
+        BarColumn(bar_width=24),
+        MofNCompleteColumn(),
+        TaskProgressColumn(),
+        TimeElapsedColumn(),
+        TimeRemainingColumn(),
+        TextColumn("{task.fields[stats]}"),
+        console=console,
+        transient=True,
+        disable=_silent
+    )
+
+    with progress:
+        task_id = progress.add_task("scanning", total=len(domains), stats="")
+
+        workers = [asyncio.create_task(worker()) for _ in range(max_concurrent)]
+
+        for domain in domains:
+            await queue.put(domain)
+            progress.update(task_id, stats=stats.render())
+
+        for _ in range(max_concurrent):
+            await queue.put(None)
+
+        await asyncio.gather(*workers)
+
+    await client.aclose()
+    return results, timeout_domains, stats
+
+
+async def retry_timeouts(subdotko, timeout_domains, session_file=None):
+    if not timeout_domains:
+        return [], 0
+
+    cprint(f"\n[dim]Retrying [yellow]{len(timeout_domains)}[/] timed-out domains at low concurrency...[/]")
+
+    retry_results = []
+    still_timeout = 0
+
+    retry_dns_sem = asyncio.Semaphore(10)
+    retry_http_sem = asyncio.Semaphore(10)
+    subdotko.dns_semaphore = retry_dns_sem
+    subdotko.http_semaphore = retry_http_sem
+
+    limits = httpx.Limits(max_keepalive_connections=10, max_connections=20)
+    async with httpx.AsyncClient(
+        verify=False,
+        follow_redirects=True,
+        limits=limits,
+        timeout=httpx.Timeout(15.0, connect=8.0)
+    ) as client:
+        sem = asyncio.Semaphore(5)
+
+        async def retry_one(domain):
+            nonlocal still_timeout
+            async with sem:
+                result = await subdotko.scan(client, domain)
+                if session_file:
+                    session_file.write(json.dumps({"d": domain, "r": result}) + "\n")
+                    session_file.flush()
+                if result and result.get("status") == ScanResult.TIMEOUT:
+                    still_timeout += 1
+                elif result:
+                    retry_results.append(result)
+                    display = format_result(result)
+                    if display:
+                        cprint(display)
+
+        tasks = [retry_one(d) for d in timeout_domains]
+        await asyncio.gather(*tasks)
+
+    return retry_results, still_timeout
 
 
 async def scan_single(subdotko, domain):
@@ -147,23 +248,25 @@ async def scan_single(subdotko, domain):
 
 def main():
     global _silent
-    
+
     parser = argparse.ArgumentParser(description="Subdotko - Subdomain fingerprinting tool")
     parser.add_argument("-d", "--domain", help="Domain to scan")
     parser.add_argument("-l", "--list", help="List of domains to scan")
     parser.add_argument("-o", "--output", help="Output file (.txt, .json, .csv)")
-    parser.add_argument("-t", "--threads", type=int, default=20, help="Number of concurrent scans (default: 20)")
+    parser.add_argument("-t", "--concurrency", type=int, default=20, help="Number of concurrent scans (default: 20)")
     parser.add_argument("-s", "--sleep", type=float, default=0.0, help="Sleep time between requests in seconds (default: 0)")
     parser.add_argument("-e", "--enumerate", action="store_true", help="Enumerate subdomains with subfinder first")
     parser.add_argument("--no-http", action="store_true", help="Skip HTTP/HTTPS checks")
     parser.add_argument("--json", action="store_true", help="Output results as JSON to stdout")
     parser.add_argument("--fresh", action="store_true", help="Ignore existing session and start fresh")
+    parser.add_argument("--no-retry", action="store_true", help="Skip retry pass for timed-out domains")
     args = parser.parse_args()
 
+    concurrency = args.concurrency
     _silent = args.json
 
     banner = f"""[bold cyan]
-    ▌  ▌  ▗ ▌   
+    ▌  ▌  ▗ ▌
 ▛▘▌▌▛▌▛▌▛▌▜▘▙▘▛▌
 ▄▌▙▌▙▌▙▌▙▌▐▖▛▖▙▌ [/bold cyan][dim]v{VERSION}[/dim]
 [white][dim]pajarori[/dim][/white]
@@ -172,14 +275,23 @@ def main():
 
     ensure_data_files()
     resolver_manager = ResolverManager()
-    
-    subdotko = Subdotko(resolver_manager=resolver_manager, no_http=args.no_http)
+
+    dns_semaphore = asyncio.Semaphore(concurrency * 3)
+    http_semaphore = asyncio.Semaphore(min(concurrency * 2, MAX_HTTP_CONNECTIONS))
+
+    subdotko = Subdotko(
+        resolver_manager=resolver_manager,
+        no_http=args.no_http,
+        dns_semaphore=dns_semaphore,
+        http_semaphore=http_semaphore
+    )
     cprint(f"[dim]Loaded [cyan]{len(subdotko.fingerprints['cnames'])}[/] CNAME + [cyan]{len(subdotko.fingerprints['ips'])}[/] IP fingerprints[/]")
+    cprint(f"[dim]Resolvers: [cyan]{resolver_manager.resolver_count()}[/] available, [cyan]{resolver_manager.pool_count()}[/] pool instances[/]")
     if args.no_http:
         cprint("[dim]HTTP/HTTPS checks disabled[/]")
 
     domains = []
-    
+
     if not sys.stdin.isatty():
         domains.extend([line.strip() for line in sys.stdin if line.strip()])
 
@@ -192,9 +304,9 @@ def main():
         except OSError as e:
             cprint(f"[red]Error:[/] Could not read file: {e}")
             return
-    
+
     domains = list(set(domains))
-    
+
     if args.enumerate:
         expanded_domains = []
         for domain in domains:
@@ -205,13 +317,13 @@ def main():
             else:
                 expanded_domains.append(domain)
         domains = list(set(expanded_domains))
-    
+
     if not domains:
         cprint("[red]No domains provided. Use -d, -l, or pipe input.[/]")
         return
-    
+
     results = []
-    
+
     if len(domains) == 1:
         cprint(f"[dim]Scanning [cyan]{domains[0]}[/][/]\n")
         result = asyncio.run(scan_single(subdotko, domains[0]))
@@ -224,10 +336,10 @@ def main():
         clean_old_sessions()
         session_hash = calculate_session_hash(domains)
         session_path = get_session_dir() / f"{session_hash}.jsonl"
-        
+
         scanned_domains = set()
         previous_results = []
-        
+
         if session_path.exists():
             if args.fresh:
                 try:
@@ -253,26 +365,39 @@ def main():
         initial_count = len(domains)
         domains = [d for d in domains if d not in scanned_domains]
         skipped_count = initial_count - len(domains)
-        
+
         if skipped_count > 0:
             cprint(f"[dim]Skipping [cyan]{skipped_count}[/] already scanned domains[/]")
             results.extend(previous_results)
-        
+
         if not domains:
-             cprint(f"[bold green]✓[/] All domains already scanned!")
+            cprint(f"[bold green]✓[/] All domains already scanned!")
         else:
-            cprint(f"[dim]Scanning [cyan]{len(domains)}[/] domains with [cyan]{args.threads}[/] concurrent connections[/]\n")
-            
+            cprint(f"[dim]Scanning [cyan]{len(domains)}[/] domains with [cyan]{concurrency}[/] concurrent workers[/]\n")
+
             with open(session_path, "a") as f:
-                new_results = asyncio.run(scan_domains(subdotko, domains, max_concurrent=args.threads, sleep_time=args.sleep, session_file=f))
+                new_results, timeout_domains, stats = asyncio.run(
+                    scan_domains(subdotko, domains, max_concurrent=concurrency, sleep_time=args.sleep, session_file=f)
+                )
                 results.extend(new_results)
-    
+
+                if timeout_domains and not args.no_retry:
+                    retry_results, still_timeout = asyncio.run(
+                        retry_timeouts(subdotko, timeout_domains, session_file=f)
+                    )
+                    results.extend(retry_results)
+                    if still_timeout > 0:
+                        cprint(f"[yellow]{still_timeout}[/] domains still timed out after retry")
+
     if args.json:
-        print(json.dumps(results, indent=2, default=str))
+        filtered = [r for r in results if r.get("status") != ScanResult.TIMEOUT]
+        print(json.dumps(filtered, indent=2, default=str))
     elif args.output:
-        export_results(results, args.output)
-    
+        filtered = [r for r in results if r.get("status") != ScanResult.TIMEOUT]
+        export_results(filtered, args.output)
+
     cprint(f"\n[bold green]✓[/] Scan complete! ({len(results)} results)")
+
 
 if __name__ == "__main__":
     main()
