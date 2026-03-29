@@ -20,7 +20,7 @@ def format_result(result):
     nested = result.get("nested_cnames", [])
     service = result.get("service", "")
     reason = result.get("reason", "")
-    http_status = result.get("http_status", "?")
+    http_status = result.get("http_status")
     
     if status == "dead":
         return f"[bold magenta][DED][/] [cyan]{domain}[/] → [red]{cname}[/] [dim]({reason})[/]"
@@ -28,9 +28,14 @@ def format_result(result):
         reason_text = f" [dim]({reason})[/]" if reason else ""
         return f"[bold red][VLN][/] [cyan]{domain}[/] → [yellow]{service}[/]{reason_text}"
     elif status == "info":
-        status_color = "green" if http_status == 200 else "yellow" if isinstance(http_status, int) and http_status < 400 else "red"
+        if http_status is None:
+            status_color = "white"
+            http_status_display = "SKP"
+        else:
+            status_color = "green" if http_status == 200 else "yellow" if isinstance(http_status, int) and http_status < 400 else "red"
+            http_status_display = http_status
         nested_str = f" [dim]{nested}[/]" if nested else ""
-        return f"[[{status_color}]{http_status}[/]] [blue]{domain}[/] → {cname}{nested_str}"
+        return f"[[{status_color}]{http_status_display}[/]] [blue]{domain}[/] → {cname}{nested_str}"
     
     return None
 
@@ -150,6 +155,7 @@ def main():
     parser.add_argument("-t", "--threads", type=int, default=20, help="Number of concurrent scans (default: 20)")
     parser.add_argument("-s", "--sleep", type=float, default=0.0, help="Sleep time between requests in seconds (default: 0)")
     parser.add_argument("-e", "--enumerate", action="store_true", help="Enumerate subdomains with subfinder first")
+    parser.add_argument("--no-http", action="store_true", help="Skip HTTP/HTTPS checks")
     parser.add_argument("--json", action="store_true", help="Output results as JSON to stdout")
     parser.add_argument("--fresh", action="store_true", help="Ignore existing session and start fresh")
     args = parser.parse_args()
@@ -167,8 +173,10 @@ def main():
     ensure_data_files()
     resolver_manager = ResolverManager()
     
-    subdotko = Subdotko(resolver_manager=resolver_manager)
+    subdotko = Subdotko(resolver_manager=resolver_manager, no_http=args.no_http)
     cprint(f"[dim]Loaded [cyan]{len(subdotko.fingerprints['cnames'])}[/] CNAME + [cyan]{len(subdotko.fingerprints['ips'])}[/] IP fingerprints[/]")
+    if args.no_http:
+        cprint("[dim]HTTP/HTTPS checks disabled[/]")
 
     domains = []
     

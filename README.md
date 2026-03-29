@@ -39,6 +39,9 @@ subdotko -l domains.txt
 # Scan with custom concurrency
 subdotko -l domains.txt -t 50
 
+# Scan without HTTP/HTTPS checks
+subdotko -l domains.txt --no-http
+
 # Scan and save output to a file (JSON, CSV, or TXT)
 subdotko -d example.com -o results.json
 
@@ -56,6 +59,7 @@ subdotko -d example.com --json
 | `-s, --sleep` | Sleep time between requests in seconds (default: 0) |
 | `-o, --output` | Output file (.txt, .json, .csv) |
 | `-e, --enumerate` | Enumerate subdomains with subfinder first |
+| `--no-http` | Skip HTTP/HTTPS checks |
 | `--json` | Output results as JSON to stdout |
 | `--fresh` | Ignore existing session and start fresh |
 

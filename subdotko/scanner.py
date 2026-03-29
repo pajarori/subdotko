@@ -4,12 +4,13 @@ from .utils import get_data_dir, console
 from .resolver import ResolverManager
 
 class Subdotko:
-    def __init__(self, fingerprint_dir=None, resolver_manager=None):
+    def __init__(self, fingerprint_dir=None, resolver_manager=None, no_http=False):
         data_dir = get_data_dir()
         self.fingerprint_dir = fingerprint_dir or str(data_dir / "fingerprints")
         self.blacklist_path = str(data_dir / "blacklists.txt")
         self.blacklist = self._load_blacklist()
         self.resolver_manager = resolver_manager or ResolverManager()
+        self.no_http = no_http
         self.fingerprints = self._load_fingerprints()
     
     def _load_blacklist(self):
@@ -237,7 +238,7 @@ class Subdotko:
         if not cnames and not a_records:
             return None
         
-        http_response = await self.http_query(client, domain)
+        http_response = None if self.no_http else await self.http_query(client, domain)
         http_status = http_response.get('status_code') if http_response else None
         cname_cnames = []
         
